@@ -1,0 +1,30 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+@import url("chrome://global/skin/in-content/info-pages.css");
+
+.major-section {
+  margin-block: 2em 1em;
+  font-size: large;
+  text-align: start;
+  font-weight: bold;
+}
+
+#autofill-feature-table > tbody > tr >  td:last-child,
+#form-analysis-table > tbody > tr >  td:last-child {
+  text-align: center;
+}
+
+.autofill-target-field {
+  background-color: #B3FFE3;
+}
+
+.autofill-invisible-field {
+  color: #B3B3B3;
+}
+
+button {
+  margin-inline: 0 8px;
+  padding: 3px;
+}

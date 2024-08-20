@@ -1,0 +1,30 @@
+[
+  {
+    "namespace": "aboutautofill",
+    "functions": [
+      {
+        "name": "startup",
+        "type": "function",
+        "description": "Performs necessary startup functions",
+        "async": true,
+        "parameters": []
+      },
+      {
+        "name": "inspect",
+        "type": "function",
+        "description": "Inspect autofillable elements",
+        "async": true,
+        "parameters": [
+          {
+            "type": "integer",
+            "name": "tabId"
+          },
+          {
+            "type": "integer",
+            "name": "elementId"
+          }
+        ]
+      }
+    ]
+  }
+]
