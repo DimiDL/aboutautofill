@@ -356,9 +356,9 @@ class AboutAutofill {
             } else {
               const host = bc.currentWindowGlobal.documentPrincipal.host;
               if (this.isSameOriginWithTop(bc)) {
-                text = `Same Origin Iframe - ${host}`;
+                text = `Same Origin Iframe - ${host}\n${fieldDetail.identifier}`;
               } else {
-                text = `Cross Origin Iframe - ${host}`;
+                text = `Cross Origin Iframe - ${host}\n${fieldDetail.identifier}`;
               }
             }
             td.setAttribute("rowspan", frameRowCount);

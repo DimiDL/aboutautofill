@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src chrome:; object-src 'none'" />
+    <link rel="stylesheet" type="text/css" href="aboutautofill.css">
+    <script src="./autofill-inspector.js"></script>
+  </head>
+  <body>
+    <div id="main"></div>
+    <div id="modal-root"></div>
+    <body class="wide-container">
+    <div id="field">
+      <input type="button" id="autofill-inspect-start-button" value="Click to inspect!"/>
+      <h2 class="major-section">Field Info</h2>
+      <fieldset>
+        <legend>Filter Options</legend>
+        <div>
+          <input type="checkbox" id="field-info-filter-by-visibility" />
+          <label for="visibility">Include Invisible Fields</label>
+        </div>
+        <div>
+          <input type="checkbox" id="field-info-filter-by-validity" />
+          <labelfor="validity">Include Unknown Fields</label>
+        </div>
+      </fieldset>
+      <table id="form-analsysis-table">
+        <thead>
+          <tr id="form-analysis-head-row">
+            <th id="col-root">Root</th>
+            <th id="col-section">Section</th>
+            <th id="col-frame">Frame</th>
+            <th id="col-identifier">Id / Name</th>
+            <th id="col-fieldName">Field Name</th>
+            <th id="col-reason">Reason</th>
+            <th id="col-isVisible">Visible</th>
+            <th id="col-part">Part</th>
+            <th id="col-confidence">Confidence</th>
+          </tr>
+        </thead>
+        <tbody id="form-analysis-table-body">
+          <!-- data is generated in javascript -->
+        </tbody>
+      </table>
+    </div>
+  </body>
+</html>

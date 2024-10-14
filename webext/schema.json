@@ -18,10 +18,6 @@
           {
             "type": "integer",
             "name": "tabId"
-          },
-          {
-            "type": "integer",
-            "name": "elementId"
           }
         ]
       }

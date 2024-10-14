@@ -57,33 +57,47 @@ this.aboutautofill = class extends ExtensionAPI {
           AboutAutofillRedirector.register();
         },
 
-        async inspect(tabId, elementId) {
-          const fieldDetails = [];
-
+        async inspect(tabId) {
           const { browser } = tabManager.get(tabId);
           const topBC = browser.browsingContext.top;
-          const contexts = topBC.getAllBrowsingContextsInSubtree();
-          for (const context of contexts) {
-            const windowGlobal = context.currentWindowGlobal;
-            if (!windowGlobal) {
-              continue;
-            }
-
-            try {
-              const actor = windowGlobal.getActor("FormAutofill");
-              const details = await actor.sendQuery("FormAutofill:InspectFields");
-              if (details?.length) {
-                fieldDetails.push(...details);
-              }
-            } catch {}
+          const windowGlobal = topBC.currentWindowGlobal;
+          if (!windowGlobal) {
+            return;
           }
 
-          // Notify About:Autofill page
-          Services.obs.notifyObservers(
-            null,
-            "formautofill-inspect-field-result",
-            JSON.stringify({ targetElementId: elementId, fieldDetails })
-          );
+          const actor = windowGlobal.getActor("FormAutofill");
+          const roots = await actor.inspectFields();
+
+          const fieldDetails = [];
+          const bcs = topBC.getAllBrowsingContextsInSubtree();
+          for (const root of roots) {
+            const rootIndex = roots.indexOf(root);
+            for (const section of root) {
+              const sectionIndex = root.indexOf(section);
+              section.fieldDetails.forEach(fd => fd.rootIndex = rootIndex);
+              section.fieldDetails.forEach(fd => fd.sectionIndex = sectionIndex);
+
+              for (const fieldDetail of section.fieldDetails) {
+                const bc = bcs.find(bc => bc.id == fieldDetail.browsingContextId);
+                if (!bc || bc == bc.top) {
+                  fieldDetail.frame = "Main Frame";
+                } else {
+                  fieldDetail.frame = "Third-Party Frame";
+                  const host = bc.currentWindowGlobal.documentPrincipal.host;
+                  if (bc.currentWindowGlobal.documentPrincipal.equals(
+                    bc.top.currentWindowGlobal.documentPrincipal)) {
+                    fieldDetail.frame = `Same Origin Iframe - ${host}\n${fieldDetail.identifier}`;
+                  } else {
+                    fieldDetail.frame = `Cross Origin Iframe - ${host}\n${fieldDetail.identifier}`;
+                  }
+                }
+              }
+              fieldDetails.push(...section.fieldDetails);
+            }
+          }
+
+          console.log("[Dimi]Fields are " + fieldDetails.map(f => f.fieldName));
+          return fieldDetails;
         },
       }
     }

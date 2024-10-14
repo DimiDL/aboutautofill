@@ -2,7 +2,13 @@
   "description": "Show information about Autofill.",
   "manifest_version": 2,
   "name": "About Autofill",
-  "version": "0.0",
+  "version": "1.0",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "update@example.com",
+      "update_url": "https://example.org/tests/junit/update_manifest.json"
+    }
+  },
   "homepage_url": "https://github.com/DimiDL/aboutautofill",
   "permissions": [
     "<all_urls>",
@@ -12,11 +18,17 @@
     "tabs"
   ],
 
+  "devtools_page": "data/devtools-opener.html",
+
   "applications": {
     "gecko": {
       "id": "aboutautofill@dlee.github.com",
-      "strict_min_version": "114.0"
+      "strict_min_version": "132.0"
     }
+  },
+  "icons": {
+      "48": "data/icons/icon.svg",
+      "96": "data/icons/icon.svg"
   },
 
   "background": {
