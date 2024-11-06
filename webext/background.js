@@ -42,11 +42,16 @@ browser.runtime.onStartup.addListener(() => {
  * When we receive the message, execute the given script in the given tab.
  */
 async function handleMessage(request, sender, sendResponse) {
-  console.log("[Dimi]receive url from " + sender.url);
+  console.log("[Dimi]receive url from " + sender.url + " with msg " + request.msg);
+  if (request.msg == "screenshot") {
+    browser.aboutautofill.test();
+    return;
+  }
   const result = await browser.aboutautofill.inspect(request.tabId);
-  console.log("[Dimi]receive url from " + sender.url + "with result: " + result);
+  console.log("[Dimi]receive url from " + sender.url + "with result: " + JSON.stringify(result));
 
-  browser.runtime.sendMessage({type: 'refresh', data: result}).catch(() => {});
+  // Should i use browser.tabs.sendMessage
+  browser.runtime.sendMessage({type: 'refresh', tabId: request.tabId, data: result}).catch(() => {});
   //if (sender.url != browser.runtime.getURL("/devtools/panel/panel.html")) {
     //return;
   //}

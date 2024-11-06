@@ -2,29 +2,138 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-@import url("chrome://global/skin/in-content/info-pages.css");
+@import url("./common.css");
+@import url("./toolbars.css");
+@import url("./variables.css");
 
-.major-section {
-  margin-block: 2em 1em;
-  font-size: large;
-  text-align: start;
-  font-weight: bold;
+
+:root {
+  /* from netmonitor/src/assets/styles/variables.css */
+  --table-zebra-background: light-dark(rgba(247, 247, 247, 0.8), rgba(255,255,255,0.05));
+  --table-selection-background-hover: light-dark(rgba(209, 232, 255, 0.8), rgba(53, 59, 72, 1));
 }
 
-#autofill-feature-table > tbody > tr >  td:last-child,
-#form-analysis-table > tbody > tr >  td:last-child {
-  text-align: center;
+.devtools-toolbar {
+  display: flex;
+  align-items: center;
 }
 
-.autofill-target-field {
-  background-color: #B3FFE3;
+.theme-body {
+  background: var(--theme-body-background)
 }
 
-.autofill-invisible-field {
-  color: #B3B3B3;
+.mainFrame {
+  display: block;
+  height: 100%;
 }
 
-button {
-  margin-inline: 0 8px;
-  padding: 3px;
+.treeTable {
+  border-spacing: 0;
+  width: 100%;
+}
+
+.treeTable .treeRow:nth-child(even) {
+  background-color: var(--table-zebra-background);
+}
+
+.treeTable .treeRow.highlighted:not(.selected) {
+  background-color: var(--theme-selection-background-hover);
+}
+
+.treeTable > thead {
+  pointer-events: none;
+}
+
+.treeTable > tbody tr {
+  height: var(--autofill-tree-row-height);
+}
+
+.treeTable > tbody td {
+  user-select: none;
+}
+
+.treeTable > tbody td > span {
+  user-select: text;
+}
+
+.mainFrame .treeTable .treeRow:not(.selected):not(.autofill-hide-highlight):hover td:not([rowspan]) {
+  background-color: var(--table-selection-background-hover);
+}
+
+.mainFrame .treeTable td:hover {
+  background-color: var(--table-selection-background-hover);
+}
+
+.mainFrame .treeTable .treeRow > .autofillForm {
+  background-image: url(./icons/formfill-anchor.svg);
+  background-position: center;
+  background-repeat: no-repeat;
+  width: 16px;
+}
+
+.mainFrame .treeTable .treeRow > .addressSection {
+  background-image: url(./icons/icon-capture-address-fields.svg);
+  background-position: center;
+  background-repeat: no-repeat;
+  width: 16px;
+}
+
+.mainFrame .treeTable .treeRow > .creditCardSection {
+  background-image: url(./icons/icon-credit-card-generic.svg);
+  background-position: center;
+  background-repeat: no-repeat;
+  width: 16px;
+}
+
+.mainFrame .treeTable .treeRow > td {
+  padding-inline-start: 4px;
+  border-bottom: 1px solid var(--theme-splitter-color);
+  font: message-box;
+  font-size: var(--autofill-font-size);
+  height: var(--theme-toolbar-height);
+  color: var(--theme-toolbar-color);
+}
+
+.mainFrame .treeTable .treeRow > td {
+  border-inline-start: 1px solid var(--grey-25);
+}
+
+.mainFrame .treeTable .treeHeaderRow > .treeHeaderCell > .treeHeaderCellBox {
+  padding-inline-start: 4px;
+  border-inline-start: 1px solid var(--grey-25);
+}
+
+.mainFrame .treeTable .treeHeaderCell {
+  border-bottom: 1px solid var(--theme-splitter-color);
+  background: var(--theme-toolbar-background);
+  font: message-box;
+  font-size: var(--autofill-font-size);
+  height: var(--theme-toolbar-height);
+  color: var(--theme-toolbar-color);
+}
+
+/* From netmonitor/src/assets/styles/Toolbar.css */
+.devtools-button.autofill-settings-menu-button::before {
+  background-image: url("./settings.svg");
+}
+
+.devtools-toolbar .devtools-checkbox {
+  position: relative;
+  vertical-align: middle;
+  bottom: 1px;
+}
+
+#devtools-cache-checkbox {
+  vertical-align: unset;
+  bottom: -1px;
+}
+
+.devtools-toolbar .devtools-checkbox-label {
+  margin-inline-start: 2px;
+  margin-inline-end: 2px;
+  white-space: nowrap;
+}
+
+.devtools-toolbar .devtools-checkbox-label.devtools-cache-checkbox {
+  margin-inline-end: 7px;
 }

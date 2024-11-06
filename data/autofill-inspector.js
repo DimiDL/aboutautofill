@@ -2,27 +2,59 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-
 function initAutofillInspectorPanel() {
   const button = document.getElementById("autofill-inspect-start-button");
   button.addEventListener("click", () => {
-    console.log("[Dimi]StartInspect");
     browser.runtime.sendMessage({
       tabId: browser.devtools.inspectedWindow.tabId,
     });
   });
 
-  let element = document.getElementById("field-info-filter-by-visibility");
-  element.checked = true;
-  element.addEventListener("click", () =>
-    this.updateFieldsInfo(this.targetId, this.inspectionResult)
-  );
+  const exportButton = document.getElementById("autofill-export-button");
+  exportButton.addEventListener("click", () => {
+    // Use html2Canvas to screenshot
+    const element = document.getElementById("autofill-panel");
 
-  element = document.getElementById("field-info-filter-by-validity");
-  element.checked = false;
-  element.addEventListener("click", () =>
-    this.updateFieldsInfo(this.targetId, this.inspectionResult)
-  );
+    const rect = element.getBoundingClientRect();
+
+    const canvas = document.createElement("canvas");
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+    const context = canvas.getContext("2d");
+
+    html2canvas(element).then(canvas => {
+      const dataUrl = canvas.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = "screenshot.png";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+  });
+
+  const headers = [ {id: "col-root", text: "Root"},
+    {id: "col-section", text: "Section"},
+    {id: "col-frame", text: "Frame"},
+    {id: "col-identifier", text: "Id/Name"},
+    {id: "col-fieldName", text: "FieldName"},
+    {id: "col-reason", text: "Reason"},
+    {id: "col-isVisible", text: "Visible"},
+    {id: "col-part", text: "Part"},
+    {id: "col-confidence", text: "Confidence"},
+  ];
+
+  const head = document.getElementById("form-analysis-head-row");
+  headers.forEach(header => {
+    const td = document.createElement("td");
+    td.setAttribute("id", header.id);
+    td.setAttribute("class", "treeHeaderCell");
+    const div = document.createElement("div");
+    div.setAttribute("class", "treeHeaderCellBox");
+    div.innerHTML = header.text;
+    td.appendChild(div);
+    head.appendChild(td);
+  });
 }
 
 function fieldDetailToColumnValue(columnId, fieldDetail) {
@@ -31,24 +63,10 @@ function fieldDetailToColumnValue(columnId, fieldDetail) {
   return fieldDetail[fieldName];
 }
 
-function filterFields(fieldDetail) {
-  let element = document.getElementById("field-info-filter-by-visibility");
-  if (!fieldDetail.isVisible && !element.checked) {
-    return false;
-  }
-
-  element = document.getElementById("field-info-filter-by-validity");
-  if (!fieldDetail.fieldName && !element.checked) {
-    return false;
-  }
-  return true;
-}
-
 function updateFieldsInfo(targetId, fieldDetails) {
   if (!fieldDetails) {
     return;
   }
-  fieldDetails = fieldDetails.filter(field => this.filterFields(field));
 
   const tbody = document.getElementById("form-analysis-table-body");
   while (tbody.firstChild) {
@@ -65,10 +83,89 @@ function updateFieldsInfo(targetId, fieldDetails) {
 
   let frameRowCount = 0;
   let frameRowSpan = false;
+
   for (let index = 0; index < fieldDetails.length; index++) {
     const fieldDetail = fieldDetails[index];
 
     const tr = document.createElement("tr");
+    tr.setAttribute("class", "treeRow");
+
+    const [id, name] = fieldDetail.identifier.split("/");
+    const selector = `[data-autofill-inspect-id="${JSON.parse(fieldDetail.elementId).id}"]`;
+    tr.addEventListener("mouseover", (event) => {
+      if (event.target.hasAttribute("rowspan")) {
+        tr.classList.add('className', 'autofill-hide-highlight');
+        return;
+      }
+
+      event.preventDefault();
+      const js = `
+        (function() {
+          function scrollToElementIfNotInView(element) {
+            const rect = element.getBoundingClientRect();
+            const isInViewport = (
+              rect.top >= 0 &&
+              rect.left >= 0 &&
+              rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+              rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+            );
+
+            if (!isInViewport) {
+              element.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});
+            }
+          }
+
+          const element = document.querySelector('${selector}');
+          if (!element) {
+            const iframes = doc.querySelectorAll("iframe");
+            for (let iframe of iframes) {
+              element = document.querySelector('${selector}');
+              if (element) {
+                break;
+              }
+            }
+          }
+
+          if (element) {
+            element.setAttribute('data-original-bg', window.getComputedStyle(element).backgroundColor);
+            element.style.backgroundColor = 'lightblue';
+            scrollToElementIfNotInView(element);
+          }
+        })();
+      `;
+      browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
+    });
+
+    tr.addEventListener("mouseout", (event) => {
+      if (event.target.hasAttribute("rowspan")) {
+        tr.classList.remove('className', 'autofill-hide-highlight');
+        return;
+      }
+
+      event.preventDefault();
+      const js = `
+        (function() {
+          const element = document.querySelector('${selector}');
+          if (!element) {
+            const iframes = doc.querySelectorAll("iframe");
+            for (let iframe of iframes) {
+              element = document.querySelector('${selector}');
+              if (element) {
+                break;
+              }
+            }
+          }
+          if (element) {
+            if (element && element.hasAttribute('data-original-bg')) {
+              // Reset to the original background color
+              element.style.backgroundColor = element.getAttribute('data-original-bg');
+              element.removeAttribute('data-original-bg');
+            }
+          }
+        })();
+      `;
+      browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
+    });
 
     if (rootRowCount == 0) {
       const current = fieldDetail.rootIndex;
@@ -115,15 +212,19 @@ function updateFieldsInfo(targetId, fieldDetails) {
           if (rootRowSpan) {
             continue;
           }
-          text = `Form ${fieldDetail.rootIndex}`;
           td.setAttribute("rowspan", rootRowCount);
+          td.setAttribute("class", "autofillForm");
           rootRowSpan = true;
           break;
         case "col-section":
           if (sectionRowSpan) {
             continue;
           }
-          text = `Section ${fieldDetail.sectionIndex}`;
+          if (fieldDetail.fieldName.startsWith("cc-")) {
+            td.setAttribute("class", "creditCardSection");
+          } else {
+            td.setAttribute("class", "addressSection");
+          }
           td.setAttribute("rowspan", sectionRowCount);
           sectionRowSpan = true;
           break;
@@ -150,7 +251,9 @@ function updateFieldsInfo(targetId, fieldDetails) {
         }
       }
 
-      td.appendChild(document.createTextNode(text));
+      if (text) {
+        td.appendChild(document.createTextNode(text));
+      }
       tr.appendChild(td);
     }
     rootRowCount--;
@@ -164,6 +267,10 @@ document.addEventListener("DOMContentLoaded", initAutofillInspectorPanel, { once
 
 // Handle requests from background script.
 browser.runtime.onMessage.addListener((request) => {
+  if (request.tabId != browser.devtools.inspectedWindow.tabId) {
+    return;
+  }
+
   if (request.type === 'refresh') {
     const json = JSON.stringify(request.data);
     updateFieldsInfo(null, request.data)

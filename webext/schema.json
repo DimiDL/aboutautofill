@@ -10,6 +10,13 @@
         "parameters": []
       },
       {
+        "name": "test",
+        "type": "function",
+        "description": "Performs necessary startup functions",
+        "async": true,
+        "parameters": []
+      },
+      {
         "name": "inspect",
         "type": "function",
         "description": "Inspect autofillable elements",

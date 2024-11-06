@@ -1,3 +1,8 @@
+//ChromeUtils.defineESModuleGetters(this, {
+  //RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
+  //ScreenshotsUtils: "resource:///modules/ScreenshotsUtils.sys.mjs"
+//});
+
 const INDEX_HTML = "chrome://aboutautofill/content/index.html";
 
 let AboutAutofillRedirector = {
@@ -57,6 +62,9 @@ this.aboutautofill = class extends ExtensionAPI {
           AboutAutofillRedirector.register();
         },
 
+        async test() {
+        },
+
         async inspect(tabId) {
           const { browser } = tabManager.get(tabId);
           const topBC = browser.browsingContext.top;
@@ -79,17 +87,15 @@ this.aboutautofill = class extends ExtensionAPI {
 
               for (const fieldDetail of section.fieldDetails) {
                 const bc = bcs.find(bc => bc.id == fieldDetail.browsingContextId);
+                const host = bc.currentWindowGlobal.documentPrincipal.host;
+
                 if (!bc || bc == bc.top) {
-                  fieldDetail.frame = "Main Frame";
-                } else {
-                  fieldDetail.frame = "Third-Party Frame";
-                  const host = bc.currentWindowGlobal.documentPrincipal.host;
-                  if (bc.currentWindowGlobal.documentPrincipal.equals(
+                  fieldDetail.frame = `(M) ${host}`;
+                } else if (bc.currentWindowGlobal.documentPrincipal.equals(
                     bc.top.currentWindowGlobal.documentPrincipal)) {
-                    fieldDetail.frame = `Same Origin Iframe - ${host}\n${fieldDetail.identifier}`;
-                  } else {
-                    fieldDetail.frame = `Cross Origin Iframe - ${host}\n${fieldDetail.identifier}`;
-                  }
+                  fieldDetail.frame = `(S) ${host}`;
+                } else {
+                  fieldDetail.frame = `(C) ${host}`;
                 }
               }
               fieldDetails.push(...section.fieldDetails);
