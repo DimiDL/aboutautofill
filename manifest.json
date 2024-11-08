@@ -6,26 +6,27 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "update@example.com",
-      "update_url": "https://example.org/tests/junit/update_manifest.json"
+      "update_url": "https://example.org/tests/junit/update_manifest.json",
+      "strict_min_version": "132.0"
     }
   },
   "homepage_url": "https://github.com/DimiDL/aboutautofill",
   "permissions": [
     "<all_urls>",
     "contextMenus",
+    "downloads",
     "menus",
     "mozillaAddons",
-    "tabs"
+    "tabs",
+    "scripting"
+  ],
+
+  "web_accessible_resources": [
+    "data/libs/freeze-dry.es.js"
   ],
 
   "devtools_page": "data/devtools-opener.html",
 
-  "applications": {
-    "gecko": {
-      "id": "aboutautofill@dlee.github.com",
-      "strict_min_version": "132.0"
-    }
-  },
   "icons": {
       "48": "data/icons/icon.svg",
       "96": "data/icons/icon.svg"

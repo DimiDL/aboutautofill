@@ -112,11 +112,25 @@
   color: var(--theme-toolbar-color);
 }
 
-/* From netmonitor/src/assets/styles/Toolbar.css */
-.devtools-button.autofill-settings-menu-button::before {
-  background-image: url("./settings.svg");
+.devtools-button.autofill-screenshot-button::before {
+  background-image: url("./icons/screenshot.svg");
+  background-size: 16px 16px;
+  background-repeat: no-repeat;
 }
 
+.devtools-button.autofill-export-button::before {
+  background-image: url("./icons/command-screenshot.svg");
+}
+
+.devtools-button.autofill-download-button::before {
+  background-image: url("./icons/downloads.svg");
+}
+
+.devtools-button.autofill-report-button::before {
+  background-image: url("./icons/icon-reportissue.svg");
+}
+
+/* From netmonitor/src/assets/styles/Toolbar.css */
 .devtools-toolbar .devtools-checkbox {
   position: relative;
   vertical-align: middle;
@@ -137,3 +151,12 @@
 .devtools-toolbar .devtools-checkbox-label.devtools-cache-checkbox {
   margin-inline-end: 7px;
 }
+
+.treeRow.selected {
+  background-color: var(--theme-selection-background);
+  color: var(--theme-selection-color);
+  /* Rows have tabindex=0 and get a default outline when clicked, but we already
+   * have a visible selection style so hiding the outline should be okay. */
+  outline: none;
+}
+

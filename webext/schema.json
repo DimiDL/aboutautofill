@@ -3,13 +3,6 @@
     "namespace": "aboutautofill",
     "functions": [
       {
-        "name": "startup",
-        "type": "function",
-        "description": "Performs necessary startup functions",
-        "async": true,
-        "parameters": []
-      },
-      {
         "name": "test",
         "type": "function",
         "description": "Performs necessary startup functions",
@@ -25,6 +18,23 @@
           {
             "type": "integer",
             "name": "tabId"
+          }
+        ]
+      },
+      {
+        "name": "setTestRecords",
+        "type": "function",
+        "description": "set autofill testing record for the given tab",
+        "async": true,
+        "parameters": [
+          {
+            "type": "integer",
+            "name": "tabId"
+          },
+          {
+            "type": "array",
+            "name": "records",
+            "items": { "type": "any" }
           }
         ]
       }

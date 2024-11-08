@@ -23,35 +23,85 @@ browser.runtime.onInstalled.addListener(() => {
   browser.contextMenus.onClicked.addListener(async (info, tab) => {
     switch (info.menuItemId) {
       case "inspect-autofill":
-        browser.aboutautofill.inspect(tab.id, info.targetElementId);
+        browser.aboutautofill.test();
         break;
       default:
         break;
     }
   });
-
-  browser.aboutautofill.startup();
 });
 
 // onStartup is called at browser startup if the addon is already installed.
 browser.runtime.onStartup.addListener(() => {
-  browser.aboutautofill.startup();
 });
+
+function download(html, filename) {
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+
+  // Trigger download with a save-as dialog
+  browser.downloads.download({
+    url: url,
+    filename: filename,
+    saveAs: true
+  }).then(() => {
+    console.log("Download triggered successfully.");
+    URL.revokeObjectURL(url); // Clean up the Blob URL after download
+  }).catch((error) => {
+    console.error("Error triggering download:", error);
+  });
+}
 
 /**
  * When we receive the message, execute the given script in the given tab.
  */
 async function handleMessage(request, sender, sendResponse) {
-  console.log("[Dimi]receive url from " + sender.url + " with msg " + request.msg);
-  if (request.msg == "screenshot") {
-    browser.aboutautofill.test();
-    return;
+  console.log("[Dimi]receive url from " + sender.url + " with msg " + request.msg + ", target tab is " + request.tabId);
+  switch (request.msg) {
+    case "inspect": {
+      const result = await browser.aboutautofill.inspect(request.tabId);
+      browser.runtime.sendMessage({
+        type: 'refresh',
+        tabId: request.tabId,
+        data: result
+      }).catch(() => {});
+      break;
+    }
+    case "freeze": {
+      const results = await browser.scripting.executeScript({
+        target: { tabId: request.tabId },
+        files: ["./webext/content-script.js"],
+      });
+      break;
+    }
+    case "freeze-complete": {
+      const urlObj = new URL(sender.url);
+      const filename = `${urlObj.hostname}.html`;
+      const html = request.result;
+      console.log("[Dimi]freeze get result " + html + "\n");
+      download(html, filename);
+      break;
+    }
+    case "screenshot": {
+      // Need attachmenbt, url, summary, and description
+      break;
+    }
+    case "report": {
+      // Need attachmenbt, url, summary, and description
+      browser.tabs.create({
+        url: "https://bugzilla.mozilla.org/enter_bug.cgi?product=Toolkit&component=Form+Autofill"
+      });
+      break;
+    }
+    case "set-test-records": {
+      console.log(`[Dimi]records: ${JSON.stringify(request.records)}`);
+      await browser.aboutautofill.setTestRecords(request.tabId, request.records);
+      break;
+    }
   }
-  const result = await browser.aboutautofill.inspect(request.tabId);
-  console.log("[Dimi]receive url from " + sender.url + "with result: " + JSON.stringify(result));
+  //console.log("[Dimi]receive url from " + sender.url + "with result: " + JSON.stringify(result));
 
   // Should i use browser.tabs.sendMessage
-  browser.runtime.sendMessage({type: 'refresh', tabId: request.tabId, data: result}).catch(() => {});
   //if (sender.url != browser.runtime.getURL("/devtools/panel/panel.html")) {
     //return;
   //}

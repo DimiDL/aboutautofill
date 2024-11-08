@@ -1,14 +1,89 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+//import freezeDry from './libs/freeze-dry.es.js'
 
 function initAutofillInspectorPanel() {
   const button = document.getElementById("autofill-inspect-start-button");
   button.addEventListener("click", () => {
     browser.runtime.sendMessage({
+      msg: "inspect",
       tabId: browser.devtools.inspectedWindow.tabId,
     });
   });
+
+  // TODO: Support download + generate testcase
+
+  // TODO: Implement screenshot the DOM Element
+  const screenshotButton = document.getElementById("autofill-screenshot-button");
+  screenshotButton.addEventListener("click", async () => {
+    browser.runtime.sendMessage({
+      msg: "screenshot",
+      tabId: browser.devtools.inspectedWindow.tabId,
+    });
+  });
+
+  // TODO: Support iframe, zip everything
+  const downloadButton = document.getElementById("autofill-download-button");
+  downloadButton.addEventListener("click", async () => {
+    browser.runtime.sendMessage({
+      msg: "freeze",
+      tabId: browser.devtools.inspectedWindow.tabId,
+    });
+  });
+
+
+  // TODO: Make the bugzilla to save more fields
+  const reportButton = document.getElementById("autofill-report-button");
+  reportButton.addEventListener("click", async () => {
+    browser.runtime.sendMessage({
+      msg: "report",
+      tabId: browser.devtools.inspectedWindow.tabId,
+    });
+  });
+
+  // TODO: Support Read JSON for Test Records
+  // TODO: Support dropdown to choose the country for selected address, type for selected credit card
+  const addAddressButton = document.getElementById("autofill-add-address-button");
+  const addCreditCardButton = document.getElementById("autofill-add-credit-card-button");
+
+  function onAddRecord() {
+    console.log("[Dimi]onAddRecord ");
+    const records = [];
+    if (addAddressButton.checked) {
+      records.push({
+        "given-name": "John",
+        "additional-name": "R.",
+        "family-name": "Smith",
+        organization: "World Wide Web Consortium",
+        "street-address": "32 Vassar Street\nMIT Room 32-G524",
+        "address-level2": "Cambridge",
+        "address-level1": "MA",
+        "postal-code": "02139",
+        country: "US",
+        tel: "+16172535702",
+        email: "timbl@w3.org",
+      });
+    };
+
+    if (addCreditCardButton.checked) {
+      records.push({
+        "cc-name": "John Doe",
+        "cc-number": "4111111111111111",
+        "cc-exp-month": 4,
+        "cc-exp-year": new Date().getFullYear(),
+      });
+    }
+
+    browser.runtime.sendMessage({
+      msg: "set-test-records",
+      tabId: browser.devtools.inspectedWindow.tabId,
+      records,
+    });
+  }
+
+  addAddressButton.addEventListener("change", (event) => onAddRecord());
+  addCreditCardButton.addEventListener("change", (event) => onAddRecord());
 
   const exportButton = document.getElementById("autofill-export-button");
   exportButton.addEventListener("click", () => {
@@ -55,6 +130,7 @@ function initAutofillInspectorPanel() {
     td.appendChild(div);
     head.appendChild(td);
   });
+
 }
 
 function fieldDetailToColumnValue(columnId, fieldDetail) {
@@ -84,6 +160,7 @@ function updateFieldsInfo(targetId, fieldDetails) {
   let frameRowCount = 0;
   let frameRowSpan = false;
 
+  // Bug: We might duplicate the first row
   for (let index = 0; index < fieldDetails.length; index++) {
     const fieldDetail = fieldDetails[index];
 
@@ -261,6 +338,17 @@ function updateFieldsInfo(targetId, fieldDetails) {
     frameRowCount--;
     tbody.appendChild(tr);
   }
+
+  let previousSelected;
+  document.querySelectorAll(".treeRow").forEach(row => {
+    row.addEventListener("click", function() {
+      previousSelected?.classList.remove("selected");
+      previousSelected = this;
+      this.classList.toggle("selected");
+
+      // TODO: Show background for selected elements
+    });
+  });
 }
 
 document.addEventListener("DOMContentLoaded", initAutofillInspectorPanel, { once: true });
