@@ -35,8 +35,7 @@ browser.runtime.onInstalled.addListener(() => {
 browser.runtime.onStartup.addListener(() => {
 });
 
-function download(html, filename) {
-  const blob = new Blob([html], { type: 'text/html' });
+function download(blob, filename) {
   const url = URL.createObjectURL(blob);
 
   // Trigger download with a save-as dialog
@@ -50,6 +49,20 @@ function download(html, filename) {
   }).catch((error) => {
     console.error("Error triggering download:", error);
   });
+}
+
+function dataURLToBlob(url) {
+  const binary = atob(url.split(",", 2)[1]);
+  let contentType = url.split(",", 1)[0];
+  contentType = contentType.split(";", 1)[0];
+  contentType = contentType.split(":", 2)[1];
+
+  if (contentType !== "image/png" && contentType !== "image/jpeg") {
+    contentType = "image/png";
+  }
+  const data = Uint8Array.from(binary, char => char.charCodeAt(0));
+  const blob = new Blob([data], { type: contentType });
+  return blob;
 }
 
 /**
@@ -68,6 +81,7 @@ async function handleMessage(request, sender, sendResponse) {
       break;
     }
     case "freeze": {
+      // TODO: Only executeScript when we have done it before
       const results = await browser.scripting.executeScript({
         target: { tabId: request.tabId },
         files: ["./webext/content-script.js"],
@@ -76,14 +90,28 @@ async function handleMessage(request, sender, sendResponse) {
     }
     case "freeze-complete": {
       const urlObj = new URL(sender.url);
-      const filename = `${urlObj.hostname}.html`;
+      const filename = `freeze-${urlObj.hostname}.html`;
       const html = request.result;
-      console.log("[Dimi]freeze get result " + html + "\n");
-      download(html, filename);
+      const blob = new Blob([html], { type: 'text/html' });
+      download(blob, filename);
       break;
     }
     case "screenshot": {
-      // Need attachmenbt, url, summary, and description
+      const tab = await browser.tabs.get(request.tabId);
+      const urlObj = new URL(tab.url);
+      const filename = `dom-${urlObj.hostname}.png`;
+      const dataUrl = await browser.tabs.captureTab(request.tabId, {rect: request.rect});
+      const blob = dataURLToBlob(dataUrl);
+      download(blob, filename);
+      break;
+    }
+    case "export-inspect": {
+      const tab = await browser.tabs.get(request.tabId);
+      const urlObj = new URL(tab.url);
+      const filename = `inspect-${urlObj.hostname}.png`;
+      const dataUrl = await browser.aboutautofill.test();
+      const blob = dataURLToBlob(dataUrl);
+      download(blob, filename);
       break;
     }
     case "report": {

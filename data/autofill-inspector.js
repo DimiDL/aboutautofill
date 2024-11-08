@@ -17,10 +17,23 @@ function initAutofillInspectorPanel() {
   // TODO: Implement screenshot the DOM Element
   const screenshotButton = document.getElementById("autofill-screenshot-button");
   screenshotButton.addEventListener("click", async () => {
-    browser.runtime.sendMessage({
-      msg: "screenshot",
-      tabId: browser.devtools.inspectedWindow.tabId,
-    });
+    browser.devtools.inspectedWindow.eval(
+      `({
+          width: document.documentElement.scrollWidth,
+          height: document.documentElement.scrollHeight,
+      })`, (result) => {
+        browser.runtime.sendMessage({
+          msg: "screenshot",
+          rect: {
+            x: 0,
+            y: 0,
+            width: result.width,
+            height: result.height,
+          },
+          tabId: browser.devtools.inspectedWindow.tabId,
+        });
+      }
+    );
   });
 
   // TODO: Support iframe, zip everything
@@ -87,6 +100,10 @@ function initAutofillInspectorPanel() {
 
   const exportButton = document.getElementById("autofill-export-button");
   exportButton.addEventListener("click", () => {
+    //browser.runtime.sendMessage({
+      //msg: "export-inspect",
+      //tabId: browser.devtools.inspectedWindow.tabId,
+    //});
     // Use html2Canvas to screenshot
     const element = document.getElementById("autofill-panel");
 
