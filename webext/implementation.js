@@ -1,5 +1,12 @@
 const INDEX_HTML = "chrome://aboutautofill/content/index.html";
 
+const lazy = {};
+
+ChromeUtils.defineESModuleGetters(lazy, {
+  WebNavigationFrames: "resource://gre/modules/WebNavigationFrames.sys.mjs",
+});
+
+
 this.aboutautofill = class extends ExtensionAPI {
   // Ideally we'd be able to implement onUninstall and onUpdate static methods,
   // as described in
@@ -37,6 +44,9 @@ this.aboutautofill = class extends ExtensionAPI {
               for (const fieldDetail of section.fieldDetails) {
                 const bc = bcs.find(bc => bc.id == fieldDetail.browsingContextId);
                 const host = bc.currentWindowGlobal.documentPrincipal.host;
+
+                fieldDetail.frameId = lazy.WebNavigationFrames.getFrameId(bc);
+                console.log("[FrameId]" + fieldDetail.frameId);
 
                 if (!bc || bc == bc.top) {
                   fieldDetail.frame = `(M) ${host}`;

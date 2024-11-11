@@ -9,6 +9,11 @@ function inspectIdToElementSelector(id) {
   return `[data-moz-autofill-inspect-id="${id}"]`;
 }
 function initAutofillInspectorPanel() {
+  browser.runtime.sendMessage({
+    msg: "init",
+    tabId: browser.devtools.inspectedWindow.tabId,
+  });
+
   const button = document.getElementById("autofill-inspect-start-button");
   button.addEventListener("click", () => {
     browser.runtime.sendMessage({
@@ -19,7 +24,7 @@ function initAutofillInspectorPanel() {
 
   const inspectElementButton = document.getElementById("autofill-inspect-element-button");
   inspectElementButton.addEventListener("click", () => {
-    const row = document.querySelector("tr .selected");
+    const row = document.querySelector("tr.selected");
     const fieldDetail = gRowToFieldDetailMap.get(row);
     const js = `
       (function() {
@@ -78,7 +83,6 @@ function initAutofillInspectorPanel() {
   const addCreditCardButton = document.getElementById("autofill-add-credit-card-button");
 
   function onAddRecord() {
-    console.log("[Dimi]onAddRecord ");
     const records = [];
     if (addAddressButton.checked) {
       records.push({
@@ -168,77 +172,36 @@ function fieldDetailToColumnValue(columnId, fieldDetail) {
   return fieldDetail[fieldName];
 }
 
-function scrollIntoView(inspectId) {
-  const js = `
-    (function() {
-      const selector = '${inspectIdToElementSelector(inspectId)}'
-      const element = document.querySelector(selector);
-      if (!element) {
-        return;
-      }
-      const rect = element.getBoundingClientRect();
-      const isInViewport = (
-        rect.top >= 0 &&
-        rect.left >= 0 &&
-        rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
-        rect.right <= (window.innerWidth || document.documentElement.clientWidth)
-      );
-
-      if (!isInViewport) {
-        element.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});
-      }
-    })();
-  `;
-  browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
+function scrollIntoView(fieldDetail) {
+  browser.runtime.sendMessage({
+    msg: "scroll",
+    tabId: browser.devtools.inspectedWindow.tabId,
+    inspectId: fieldDetail.inspectId,
+    frameId: fieldDetail.frameId,
+  });
 }
 
 // TODO: FormAutofill uses Inspect Field to mark id for <iframe>
 // TODO: We should use overlay div instead of setting backgroud
-function addHighlightOverlay(type, inspectId) {
-  const color = type == 'select' ? 'blue' : 'red';
-  const bgColor = type == 'select' ? 'rgba(0, 0, 255, 0.2)' : 'rgba(255, 0, 0, 0.2)';
-  const zIndex = type == 'select' ? 9999 : 9998;
-
-  const js = `
-    (function() {
-      const selector = '${inspectIdToElementSelector(inspectId)}'
-      const element = document.querySelector(selector);
-      if (!element) {
-        return;
-      }
-
-      const highlightOverlay = document.createElement("div");
-      highlightOverlay.classList.add("moz-autofill-overlay");
-      highlightOverlay.id = "moz-${type}-highlight-overlay-${inspectId}";
-      document.body.appendChild(highlightOverlay);
-
-      Object.assign(highlightOverlay.style, {
-        position: "absolute",
-        backgroundColor: "${bgColor}",
-        border: "2px solid ${color}",
-        zIndex: ${zIndex},
-        pointerEvents: "none",
-      });
-
-      const rect = element.getBoundingClientRect();
-      highlightOverlay.style.top = rect.top + window.scrollY + 'px';
-      highlightOverlay.style.left = rect.left + window.scrollX + 'px';
-      highlightOverlay.style.width = rect.width + 'px';
-      highlightOverlay.style.height = rect.height + 'px';
-    })();
-  `;
-  browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
+function addHighlightOverlay(type, fieldDetail) {
+  browser.runtime.sendMessage({
+    msg: "highlight",
+    tabId: browser.devtools.inspectedWindow.tabId,
+    type,
+    inspectId: fieldDetail.inspectId,
+    frameId: fieldDetail.frameId,
+  });
 }
 
 // Type should be either `select` or `hover`
-function removeHighlightOverlay(type, inspectId) {
-  const js = `
-    (function() {
-      const overlay = document.getElementById('moz-${type}-highlight-overlay-${inspectId}');
-      overlay?.remove();
-    })();
-  `;
-  browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
+function removeHighlightOverlay(type, fieldDetail) {
+  browser.runtime.sendMessage({
+    msg: "highlight-remove",
+    tabId: browser.devtools.inspectedWindow.tabId,
+    type,
+    inspectId: fieldDetail.inspectId,
+    frameId: fieldDetail.frameId,
+  });
 }
 
 function getSpannedRows(td) {
@@ -258,27 +221,26 @@ function getSpannedRows(td) {
   return spannedRows;
 }
 
-function setupRowMouseOver(tr, inspectId) {
+function setupRowMouseOver(tr, fieldDetail) {
   tr.addEventListener("mouseover", (event) => {
+    event.preventDefault();
     if (event.target.hasAttribute("rowspan")) {
       tr.classList.add('className', 'autofill-hide-highlight');
       return;
     }
 
-    event.preventDefault();
-
-    addHighlightOverlay("hover", inspectId);
-    scrollIntoView(inspectId);
+    addHighlightOverlay("hover", fieldDetail);
+    scrollIntoView(fieldDetail);
   });
 
   tr.addEventListener("mouseout", (event) => {
+    event.preventDefault();
     if (event.target.hasAttribute("rowspan")) {
       tr.classList.remove('className', 'autofill-hide-highlight');
       return;
     }
 
-    event.preventDefault();
-    removeHighlightOverlay("hover", gRowToFieldDetailMap.get(tr).inspectId);
+    removeHighlightOverlay("hover", fieldDetail);
   });
 }
 
@@ -313,7 +275,7 @@ function updateFieldsInfo(fieldDetails) {
 
     // Setup the mouse over handler for this row
     gRowToFieldDetailMap.set(tr, fieldDetail);
-    setupRowMouseOver(tr, fieldDetail.inspectId);
+    setupRowMouseOver(tr, fieldDetail);
 
     for (const column of cols) {
       if (!column.id) {
@@ -404,9 +366,9 @@ function updateFieldsInfo(fieldDetails) {
 
       for (const row of rows) {
         if (row.classList.contains("selected")) {
-          removeHighlightOverlay("select", gRowToFieldDetailMap.get(row).inspectId);
+          removeHighlightOverlay("select", gRowToFieldDetailMap.get(row));
         } else {
-          addHighlightOverlay("select", gRowToFieldDetailMap.get(row).inspectId)
+          addHighlightOverlay("select", gRowToFieldDetailMap.get(row))
         }
         row.classList.toggle("selected");
       }
@@ -422,8 +384,19 @@ browser.runtime.onMessage.addListener((request) => {
     return;
   }
 
-  if (request.type === 'refresh') {
-    const json = JSON.stringify(request.data);
-    updateFieldsInfo(request.data)
+  switch (request.msg) {
+    case 'refresh': {
+      updateFieldsInfo(request.data);
+      break;
+    }
+    case 'show': {
+      const rows = document.querySelectorAll("tr.selected");
+      rows.forEach(row => {
+        const fieldDetail = gRowToFieldDetailMap.get(row);
+        if (fieldDetail) {
+          addHighlightOverlay("select", fieldDetail);
+        }
+      });
+    }
   }
 });

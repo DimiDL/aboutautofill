@@ -18,7 +18,8 @@
     "menus",
     "mozillaAddons",
     "tabs",
-    "scripting"
+    "scripting",
+    "webNavigation"
   ],
 
   "web_accessible_resources": [

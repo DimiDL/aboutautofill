@@ -14,8 +14,16 @@ browser.devtools.panels
 
 function panelShown() {
   console.log("[Dimi]Panel is shown");
+  browser.runtime.sendMessage({
+    msg: "show",
+    tabId: browser.devtools.inspectedWindow.tabId,
+  });
 }
 
 function panelHidden() {
   console.log("[Dimi]Panel is hidden");
+  browser.runtime.sendMessage({
+    msg: "hide",
+    tabId: browser.devtools.inspectedWindow.tabId,
+  });
 }

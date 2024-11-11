@@ -35,6 +35,102 @@ browser.runtime.onInstalled.addListener(() => {
 browser.runtime.onStartup.addListener(() => {
 });
 
+async function refresh({ tabId }) {
+  const frames = await browser.webNavigation.getAllFrames({ tabId });
+  browser.scripting.executeScript({
+    target: {
+      tabId,
+      frameIds: [...frames.map(frame => frame.frameId)],
+    },
+    func: () => {
+      const overlays = document.querySelectorAll('div.moz-autofill-overlay');
+      overlays.forEach(element => element.remove());
+    }
+  });
+}
+
+function scrollIntoView({ tabId, inspectId, frameId }) {
+  browser.scripting.executeScript({
+    target: {
+      tabId,
+      frameIds: [frameId],
+    },
+    func: (inspectId) => {
+      const selector = `[data-moz-autofill-inspect-id="${inspectId}"]`;
+      const element = document.querySelector(selector);
+      if (!element) {
+        return;
+      }
+      const rect = element.getBoundingClientRect();
+      const isInViewport = (
+        rect.top >= 0 &&
+        rect.left >= 0 &&
+        rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+        rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+      );
+
+      if (!isInViewport) {
+        element.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});
+      }
+    },
+    args: [inspectId]
+  });
+}
+
+async function addHighlightOverlay({ tabId, type, inspectId, frameId }) {
+  browser.scripting.executeScript({
+    target: {
+      tabId,
+      frameIds: [frameId],
+    },
+    func: (type, inspectId) => {
+      const color = type == 'select' ? 'blue' : 'red';
+      const bgColor = type == 'select' ? 'rgba(0, 0, 255, 0.2)' : 'rgba(255, 0, 0, 0.2)';
+      const zIndex = type == 'select' ? 9999 : 9998;
+
+      const selector = `[data-moz-autofill-inspect-id="${inspectId}"]`;
+      const element = document.querySelector(selector);
+      if (!element) {
+        return;
+      }
+
+      const highlightOverlay = document.createElement("div");
+      highlightOverlay.classList.add("moz-autofill-overlay");
+      highlightOverlay.id = `moz-${type}-highlight-overlay-${inspectId}`;
+      document.body.appendChild(highlightOverlay);
+
+      Object.assign(highlightOverlay.style, {
+        position: "absolute",
+        backgroundColor: `${bgColor}`,
+        border: `2px solid ${color}`,
+        zIndex: zIndex,
+        pointerEvents: "none",
+      });
+
+      const rect = element.getBoundingClientRect();
+      highlightOverlay.style.top = rect.top + window.scrollY + 'px';
+      highlightOverlay.style.left = rect.left + window.scrollX + 'px';
+      highlightOverlay.style.width = rect.width + 'px';
+      highlightOverlay.style.height = rect.height + 'px';
+    },
+    args: [type, inspectId]
+  });
+}
+
+async function removeHighlightOverlay({ tabId, type, inspectId, frameId }) {
+  browser.scripting.executeScript({
+    target: {
+      tabId,
+      frameIds: [frameId],
+    },
+    func: (type, inspectId) => {
+      const overlay = document.getElementById(`moz-${type}-highlight-overlay-${inspectId}`);
+      overlay?.remove();
+    },
+    args: [type, inspectId]
+  });
+}
+
 function download(blob, filename) {
   const url = URL.createObjectURL(blob);
 
@@ -69,15 +165,31 @@ function dataURLToBlob(url) {
  * When we receive the message, execute the given script in the given tab.
  */
 async function handleMessage(request, sender, sendResponse) {
-  console.log("[Dimi]receive url from " + sender.url + " with msg " + request.msg + ", target tab is " + request.tabId);
   switch (request.msg) {
+    case "hide": {
+      await refresh(request);
+      break;
+    }
     case "inspect": {
+      await refresh(request);
       const result = await browser.aboutautofill.inspect(request.tabId);
       browser.runtime.sendMessage({
-        type: 'refresh',
+        msg: 'refresh',
         tabId: request.tabId,
         data: result
       }).catch(() => {});
+      break;
+    }
+    case "scroll": {
+      scrollIntoView(request);
+      break;
+    }
+    case "highlight": {
+      addHighlightOverlay(request);
+      break;
+    }
+    case "highlight-remove": {
+      removeHighlightOverlay(request);
       break;
     }
     case "freeze": {
@@ -113,12 +225,10 @@ async function handleMessage(request, sender, sendResponse) {
       break;
     }
     case "set-test-records": {
-      console.log(`[Dimi]records: ${JSON.stringify(request.records)}`);
       await browser.aboutautofill.setTestRecords(request.tabId, request.records);
       break;
     }
   }
-  //console.log("[Dimi]receive url from " + sender.url + "with result: " + JSON.stringify(result));
 
   // Should i use browser.tabs.sendMessage
   //if (sender.url != browser.runtime.getURL("/devtools/panel/panel.html")) {
