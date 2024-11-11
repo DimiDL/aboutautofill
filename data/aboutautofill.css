@@ -13,6 +13,16 @@
   --table-selection-background-hover: light-dark(rgba(209, 232, 255, 0.8), rgba(53, 59, 72, 1));
 }
 
+html,
+body,
+.autofill-panel {
+  flex: initial;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
 .devtools-toolbar {
   display: flex;
   align-items: center;
@@ -22,94 +32,177 @@
   background: var(--theme-body-background)
 }
 
-.mainFrame {
+.autofill-panel {
   display: block;
   height: 100%;
+  overflow: hidden;
 }
 
-.treeTable {
+/* Field list table */
+
+.field-list-container {
+ display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  color: var(--theme-body-color);
+}
+
+.field-list-scroll {
+  overflow-x: hidden;
+  overflow-y: auto;
+  width: 100% !important;
+}
+
+.field-list-scroll table {
+  /* Disable overflow-anchor for only child in the scrollable element */
+  overflow-anchor: none;
+}
+
+.field-list-table {
   border-spacing: 0;
   width: 100%;
 }
 
-.treeTable .treeRow:nth-child(even) {
-  background-color: var(--table-zebra-background);
+.field-list-table {
+  /* Reset default browser style of <table> */
+  border-spacing: 0;
+  width: 100%;
+  /* The layout must be fixed for resizing of columns to work.
+  The layout is based on the first row.
+  Set the width of those cells, and the rest of the table follows. */
+  /*table-layout: fixed;*/
+  table-layout: auto;
 }
 
-.treeTable .treeRow.highlighted:not(.selected) {
-  background-color: var(--theme-selection-background-hover);
+
+.field-list-table {
+  /* Clip column resizers when they are higher than the table. */
+  overflow: hidden;
 }
 
-.treeTable > thead {
-  pointer-events: none;
-}
+/* Field list column */
 
-.treeTable > tbody tr {
-  height: var(--autofill-tree-row-height);
-}
-
-.treeTable > tbody td {
+.field-list-column {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  /* Reset default browser style of <td> */
+  padding: 0;
+  /* Prevent text selection because it's often invisible (blue on blue),
+   * it conflicts easily with existing click and double-click actions,
+   * and we already have several Copy and Export options. */
   user-select: none;
 }
 
-.treeTable > tbody td > span {
-  user-select: text;
+.field-list-column {
+  position: relative;
 }
 
-.mainFrame .treeTable .treeRow:not(.selected):not(.autofill-hide-highlight):hover td:not([rowspan]) {
+.field-list-column > * {
+  display: inline-block;
+}
+
+.field-list-column {
+  border-inline-start: 1px solid var(--grey-25);
+  border-bottom: 1px solid var(--theme-splitter-color);
+  font: message-box;
+  height: var(--theme-toolbar-height);
+  color: var(--theme-toolbar-color);
+}
+
+/* Field list headers */
+
+.field-list-headers-group {
+  position: sticky;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 1;
+}
+
+.field-list-headers {
+  padding: 0;
+  color: var(--theme-body-color);
+  background-color: var(--theme-toolbar-background);
+}
+
+.field-list-headers th {
+  height: calc(var(--theme-toolbar-height) + 1px);
+  border-bottom: 1px solid var(--theme-splitter-color);
+}
+
+.field-list-headers th {
+  /* Allow column-resizers to be visible beyond the headers. */
+  /*! overflow: visible; */
+}
+
+.field-list-headers th:not(:first-child) {
+  border-inline-start: 1px solid var(--theme-splitter-color);
+}
+
+/* Field List Item */
+
+.field-list-item {
+  height: 24px;
+  line-height: 24px;
+}
+
+.field-list-item.autofill-section-even {
+  background-color: var(--table-zebra-background);
+}
+
+.field-list-item:not(.selected):not(.autofill-hide-highlight):hover td:not([rowspan]) {
   background-color: var(--table-selection-background-hover);
 }
 
-.mainFrame .treeTable td:hover {
+.field-list-item td#col-root:hover,
+.field-list-item td#col-section:hover,
+.field-list-item td#col-frame:hover {
   background-color: var(--table-selection-background-hover);
 }
 
-.mainFrame .treeTable .treeRow > .autofillForm {
+/* Do not show selected highlight form "Root", "Section", and "Frame" column */
+.field-list-item.selected td:not(#col-root):not(#col-section):not(#col-frame) {
+  background-color: var(--theme-selection-background);
+  color: var(--theme-selection-color);
+  /* Rows have tabindex=0 and get a default outline when clicked, but we already
+   * have a visible selection style so hiding the outline should be okay. */
+  outline: none;
+}
+
+.field-list-item > td.field-icon {
+  background-position: center;
+  background-repeat: no-repeat;
+  width: 16px;
+}
+
+.field-list-item > .field-form-icon {
   background-image: url(./icons/formfill-anchor.svg);
-  background-position: center;
-  background-repeat: no-repeat;
-  width: 16px;
 }
 
-.mainFrame .treeTable .treeRow > .addressSection {
+.field-list-item > .field-address-icon {
   background-image: url(./icons/icon-capture-address-fields.svg);
-  background-position: center;
-  background-repeat: no-repeat;
-  width: 16px;
 }
 
-.mainFrame .treeTable .treeRow > .creditCardSection {
+.field-list-item > .field-credit-card-icon {
   background-image: url(./icons/icon-credit-card-generic.svg);
-  background-position: center;
-  background-repeat: no-repeat;
-  width: 16px;
 }
 
-.mainFrame .treeTable .treeRow > td {
-  padding-inline-start: 4px;
-  border-bottom: 1px solid var(--theme-splitter-color);
-  font: message-box;
-  font-size: var(--autofill-font-size);
-  height: var(--theme-toolbar-height);
-  color: var(--theme-toolbar-color);
+.field-list-item .field-list-column {
+  padding-inline-start: 5px;
+  /* Column text should not touch the next column's border.
+     We could use a 5px space to be symmetrical, but we're using
+     text-overflow:ellipsis which makes that padding look wider in most cases,
+     and a smaller padding saves space for content. */
+  padding-inline-end: 4px;
 }
 
-.mainFrame .treeTable .treeRow > td {
-  border-inline-start: 1px solid var(--grey-25);
-}
-
-.mainFrame .treeTable .treeHeaderRow > .treeHeaderCell > .treeHeaderCellBox {
-  padding-inline-start: 4px;
-  border-inline-start: 1px solid var(--grey-25);
-}
-
-.mainFrame .treeTable .treeHeaderCell {
-  border-bottom: 1px solid var(--theme-splitter-color);
-  background: var(--theme-toolbar-background);
-  font: message-box;
-  font-size: var(--autofill-font-size);
-  height: var(--theme-toolbar-height);
-  color: var(--theme-toolbar-color);
+/* autofill inspector toolbar */
+.devtools-button.autofill-inspect-button::before {
+  background-image: url("./icons/tool-inspector.svg");
 }
 
 .devtools-button.autofill-screenshot-button::before {
@@ -150,13 +243,5 @@
 
 .devtools-toolbar .devtools-checkbox-label.devtools-cache-checkbox {
   margin-inline-end: 7px;
-}
-
-.treeRow.selected {
-  background-color: var(--theme-selection-background);
-  color: var(--theme-selection-color);
-  /* Rows have tabindex=0 and get a default outline when clicked, but we already
-   * have a visible selection style so hiding the outline should be okay. */
-  outline: none;
 }
 

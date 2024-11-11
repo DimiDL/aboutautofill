@@ -11,15 +11,6 @@ this.aboutautofill = class extends ExtensionAPI {
     return {
       aboutautofill: {
         async test() {
-          const cwg = context.browsingContext.currentWindowGlobal;
-          const rect = new context.xulBrowser.ownerGlobal.window.DOMRect(0, 0, 1300, 1500);
-          const snapshot = await cwg.drawSnapshot(rect, 1, "white");
-          const document = context.browsingContext.topChromeWindow.document;
-          const canvas = document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(snapshot, 0, 0, 1300, 1500);
-          snapshot.close();
-          return canvas.toDataURL("image/png", "");
         },
 
         async inspect(tabId) {

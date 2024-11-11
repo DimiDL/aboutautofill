@@ -3,6 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 //import freezeDry from './libs/freeze-dry.es.js'
 
+let gCurrentSelectedRows = new Set();
+let gRowToSelectorMap = new Map();
+
 function initAutofillInspectorPanel() {
   const button = document.getElementById("autofill-inspect-start-button");
   button.addEventListener("click", () => {
@@ -12,9 +15,20 @@ function initAutofillInspectorPanel() {
     });
   });
 
+  const inspectElementButton = document.getElementById("autofill-inspect-element-button");
+  inspectElementButton.addEventListener("click", () => {
+    const row = gCurrentSelectedRows.values().next().value;
+    const selector = gRowToSelectorMap.get(row);
+    const js = `
+      (function() {
+        inspect(document.querySelector('${selector}'));
+      })();
+    `;
+    browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
+  });
   // TODO: Support download + generate testcase
 
-  // TODO: Implement screenshot the DOM Element
+  // TODO: Implement screenshot the selected DOM Element
   const screenshotButton = document.getElementById("autofill-screenshot-button");
   screenshotButton.addEventListener("click", async () => {
     browser.devtools.inspectedWindow.eval(
@@ -100,10 +114,6 @@ function initAutofillInspectorPanel() {
 
   const exportButton = document.getElementById("autofill-export-button");
   exportButton.addEventListener("click", () => {
-    //browser.runtime.sendMessage({
-      //msg: "export-inspect",
-      //tabId: browser.devtools.inspectedWindow.tabId,
-    //});
     // Use html2Canvas to screenshot
     const element = document.getElementById("autofill-panel");
 
@@ -125,7 +135,8 @@ function initAutofillInspectorPanel() {
     });
   });
 
-  const headers = [ {id: "col-root", text: "Root"},
+  const headers = [
+    {id: "col-root", text: "Root"},
     {id: "col-section", text: "Section"},
     {id: "col-frame", text: "Frame"},
     {id: "col-identifier", text: "Id/Name"},
@@ -136,18 +147,16 @@ function initAutofillInspectorPanel() {
     {id: "col-confidence", text: "Confidence"},
   ];
 
-  const head = document.getElementById("form-analysis-head-row");
+  const head_tr = document.getElementById("form-analysis-head-row");
   headers.forEach(header => {
-    const td = document.createElement("td");
-    td.setAttribute("id", header.id);
-    td.setAttribute("class", "treeHeaderCell");
+    const th = document.createElement("th");
+    th.setAttribute("id", header.id);
+    th.setAttribute("class", "field-list-column");
     const div = document.createElement("div");
-    div.setAttribute("class", "treeHeaderCellBox");
     div.innerHTML = header.text;
-    td.appendChild(div);
-    head.appendChild(td);
+    th.appendChild(div);
+    head_tr.appendChild(th);
   });
-
 }
 
 function fieldDetailToColumnValue(columnId, fieldDetail) {
@@ -156,214 +165,292 @@ function fieldDetailToColumnValue(columnId, fieldDetail) {
   return fieldDetail[fieldName];
 }
 
-function updateFieldsInfo(targetId, fieldDetails) {
-  if (!fieldDetails) {
-    return;
-  }
+// TODO: FormAutofill uses Inspect Field to mark id for <iframe>
+// TODO: We should use overlay div instead of setting backgroud
+function setElementBackgroundColor(selector) {
+  const js = `
+    (function() {
+      const element = document.querySelector('${selector}');
+      if (!element) {
+        const iframes = doc.querySelectorAll("iframe");
+        for (let iframe of iframes) {
+          element = document.querySelector('${selector}');
+          if (element) {
+            break;
+          }
+        }
+      }
 
+      if (element) {
+        if (!element.hasAttribute('data-original-bg')) {
+          element.setAttribute('data-original-bg', window.getComputedStyle(element).backgroundColor);
+        }
+        element.style.backgroundColor = 'lightyellow';
+      }
+    })();
+  `;
+  browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
+}
+
+function removeElementBackgroundColor(selector) {
+  const js = `
+    (function() {
+      const element = document.querySelector('${selector}');
+      if (!element) {
+        const iframes = doc.querySelectorAll("iframe");
+        for (let iframe of iframes) {
+          element = document.querySelector('${selector}');
+          if (element) {
+            break;
+          }
+        }
+      }
+
+      if (element && element.hasAttribute('data-original-bg')) {
+        // Reset to the original background color
+        element.style.backgroundColor = element.getAttribute('data-original-bg');
+        element.removeAttribute('data-original-bg');
+      }
+    })();
+  `;
+  browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
+}
+
+function getSpannedRows(td) {
+  const rowSpan = td.rowSpan;
+  const currentRow = td.parentElement;
+  const table = currentRow.parentElement;
+
+  const rowIndex = Array.from(table.children).indexOf(currentRow);
+
+  const spannedRows = [];
+  for (let i = 0; i < rowSpan; i++) {
+    const nextRow = table.children[rowIndex + i];
+    if (nextRow) {
+        spannedRows.push(nextRow);
+    }
+  }
+  return spannedRows;
+}
+
+function setupRowMouseOver(tr, selector) {
+  gRowToSelectorMap.set(tr, selector);
+  tr.addEventListener("mouseover", (event) => {
+    if (event.target.hasAttribute("rowspan")) {
+      tr.classList.add('className', 'autofill-hide-highlight');
+      return;
+    }
+
+    const alreadySelected = gCurrentSelectedRows.has(tr);
+
+    event.preventDefault();
+    const js = `
+      (function() {
+        function scrollToElementIfNotInView(element) {
+          const rect = element.getBoundingClientRect();
+          const isInViewport = (
+            rect.top >= 0 &&
+            rect.left >= 0 &&
+            rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+            rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+          );
+
+          if (!isInViewport) {
+            element.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});
+          }
+        }
+
+        const element = document.querySelector('${selector}');
+        if (!element) {
+          const iframes = doc.querySelectorAll("iframe");
+          for (let iframe of iframes) {
+            element = document.querySelector('${selector}');
+            if (element) {
+              break;
+            }
+          }
+        }
+
+        if (element) {
+          if (!${alreadySelected}) {
+            element.setAttribute('data-original-bg', window.getComputedStyle(element).backgroundColor);
+            element.style.backgroundColor = 'lightblue';
+          }
+          scrollToElementIfNotInView(element);
+        }
+      })();
+    `;
+    browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
+  });
+
+  tr.addEventListener("mouseout", (event) => {
+    if (event.target.hasAttribute("rowspan")) {
+      tr.classList.remove('className', 'autofill-hide-highlight');
+      return;
+    }
+
+    if (gCurrentSelectedRows.has(tr)) {
+      return;
+    }
+
+    event.preventDefault();
+    const js = `
+      (function() {
+        const element = document.querySelector('${selector}');
+        if (!element) {
+          const iframes = doc.querySelectorAll("iframe");
+          for (let iframe of iframes) {
+            element = document.querySelector('${selector}');
+            if (element) {
+              break;
+            }
+          }
+        }
+        if (element) {
+          if (element && element.hasAttribute('data-original-bg')) {
+            // Reset to the original background color
+            element.style.backgroundColor = element.getAttribute('data-original-bg');
+            element.removeAttribute('data-original-bg');
+          }
+        }
+      })();
+    `;
+    browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
+  });
+}
+
+// Utils
+function findNextIndex(array, currentIndex, condition) {
+  for (let i = currentIndex + 1; i < array.length; i++) {
+    if (condition(array[i])) {
+        return i;
+    }
+  }
+  return array.length;
+}
+
+function updateFieldsInfo(fieldDetails) {
   const tbody = document.getElementById("form-analysis-table-body");
   while (tbody.firstChild) {
     tbody.firstChild.remove();
   }
 
   const cols = document.getElementById("form-analysis-head-row").childNodes;
+  let nthSection = -1;
 
-  let rootRowCount = 0;
-  let rootRowSpan = false;
+  let formNextIndex;
+  let sectionNextIndex;
+  let frameNextIndex;
 
-  let sectionRowCount = 0;
-  let sectionRowSpan = false;
-
-  let frameRowCount = 0;
-  let frameRowSpan = false;
-
-  // Bug: We might duplicate the first row
-  for (let index = 0; index < fieldDetails.length; index++) {
+  for (let index = 0; index < fieldDetails?.length; index++) {
     const fieldDetail = fieldDetails[index];
 
     const tr = document.createElement("tr");
-    tr.setAttribute("class", "treeRow");
+    tr.classList.add("field-list-item");
 
+    // Setup the mouse over handler for this row
     const [id, name] = fieldDetail.identifier.split("/");
     const selector = `[data-autofill-inspect-id="${JSON.parse(fieldDetail.elementId).id}"]`;
-    tr.addEventListener("mouseover", (event) => {
-      if (event.target.hasAttribute("rowspan")) {
-        tr.classList.add('className', 'autofill-hide-highlight');
-        return;
-      }
-
-      event.preventDefault();
-      const js = `
-        (function() {
-          function scrollToElementIfNotInView(element) {
-            const rect = element.getBoundingClientRect();
-            const isInViewport = (
-              rect.top >= 0 &&
-              rect.left >= 0 &&
-              rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
-              rect.right <= (window.innerWidth || document.documentElement.clientWidth)
-            );
-
-            if (!isInViewport) {
-              element.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});
-            }
-          }
-
-          const element = document.querySelector('${selector}');
-          if (!element) {
-            const iframes = doc.querySelectorAll("iframe");
-            for (let iframe of iframes) {
-              element = document.querySelector('${selector}');
-              if (element) {
-                break;
-              }
-            }
-          }
-
-          if (element) {
-            element.setAttribute('data-original-bg', window.getComputedStyle(element).backgroundColor);
-            element.style.backgroundColor = 'lightblue';
-            scrollToElementIfNotInView(element);
-          }
-        })();
-      `;
-      browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
-    });
-
-    tr.addEventListener("mouseout", (event) => {
-      if (event.target.hasAttribute("rowspan")) {
-        tr.classList.remove('className', 'autofill-hide-highlight');
-        return;
-      }
-
-      event.preventDefault();
-      const js = `
-        (function() {
-          const element = document.querySelector('${selector}');
-          if (!element) {
-            const iframes = doc.querySelectorAll("iframe");
-            for (let iframe of iframes) {
-              element = document.querySelector('${selector}');
-              if (element) {
-                break;
-              }
-            }
-          }
-          if (element) {
-            if (element && element.hasAttribute('data-original-bg')) {
-              // Reset to the original background color
-              element.style.backgroundColor = element.getAttribute('data-original-bg');
-              element.removeAttribute('data-original-bg');
-            }
-          }
-        })();
-      `;
-      browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
-    });
-
-    if (rootRowCount == 0) {
-      const current = fieldDetail.rootIndex;
-      const fieldsAfter = fieldDetails.slice(index + 1);
-      const nextIndex = fieldsAfter.findIndex(
-        field => field.rootIndex != current
-      );
-      rootRowCount = nextIndex == -1 ? fieldsAfter.length + 1 : nextIndex + 1;
-      rootRowSpan = false;
-    }
-    if (sectionRowCount == 0) {
-      const current = fieldDetail.sectionIndex;
-      const fieldsAfter = fieldDetails.slice(index + 1);
-      const nextIndex = fieldsAfter.findIndex(
-        field =>
-          field.sectionIndex != current && field.sectionIndex != undefined
-      );
-      sectionRowCount =
-        nextIndex == -1 ? fieldsAfter.length + 1 : nextIndex + 1;
-      sectionRowCount = Math.min(sectionRowCount, rootRowCount);
-      sectionRowSpan = false;
-    }
-    if (frameRowCount == 0) {
-      const current = fieldDetail.browsingContextId;
-      const fieldsAfter = fieldDetails.slice(index + 1);
-      const nextIndex = fieldsAfter.findIndex(
-        field => field.browsingContextId != current
-      );
-      frameRowCount =
-        nextIndex == -1 ? fieldsAfter.length + 1 : nextIndex + 1;
-      frameRowCount = Math.min(frameRowCount, sectionRowCount);
-      frameRowSpan = false;
-    }
+    setupRowMouseOver(tr, selector);
 
     for (const column of cols) {
       if (!column.id) {
         continue;
       }
       const td = document.createElement("td");
+      td.setAttribute("class", "field-list-column")
+      td.id = column.id;
 
-      let text;
       switch (column.id) {
-        case "col-root":
-          if (rootRowSpan) {
+        case "col-root": {
+          if (formNextIndex && index < formNextIndex) {
             continue;
           }
-          td.setAttribute("rowspan", rootRowCount);
-          td.setAttribute("class", "autofillForm");
-          rootRowSpan = true;
+          formNextIndex = findNextIndex(fieldDetails, index, (compare) =>
+            fieldDetail.rootIndex != compare.rootIndex
+          );
+          td.setAttribute("rowspan", formNextIndex - index);
+
+          td.classList.add("field-icon");
+          td.classList.add("field-form-icon");
           break;
-        case "col-section":
-          if (sectionRowSpan) {
+        }
+        case "col-section": {
+          if (sectionNextIndex && index < sectionNextIndex) {
             continue;
           }
+          sectionNextIndex = findNextIndex(fieldDetails, index, (compare) =>
+            fieldDetail.sectionIndex != compare.sectionIndex
+          );
+          if (sectionNextIndex > formNextIndex) {
+            sectionNextIndex = formNextIndex;
+          }
+          td.setAttribute("rowspan", sectionNextIndex - index);
+
+          nthSection++;
+          td.classList.add("field-icon");
           if (fieldDetail.fieldName.startsWith("cc-")) {
-            td.setAttribute("class", "creditCardSection");
+            td.classList.add("field-credit-card-icon");
           } else {
-            td.setAttribute("class", "addressSection");
+            td.classList.add("field-address-icon");
           }
-          td.setAttribute("rowspan", sectionRowCount);
-          sectionRowSpan = true;
           break;
+        }
         case "col-frame": {
-          if (frameRowSpan) {
+          if (frameNextIndex && index < frameNextIndex) {
             continue;
           }
-          text = fieldDetail.frame;
-          td.setAttribute("rowspan", frameRowCount);
-          frameRowSpan = true;
+          frameNextIndex = findNextIndex(fieldDetails, index, (compare) =>
+            fieldDetail.browsingContextId != compare.browsingContextId
+          );
+          if (frameNextIndex > sectionNextIndex) {
+            frameNextIndex = sectionNextIndex;
+          }
+          td.setAttribute("rowspan", frameNextIndex - index);
+
+          td.appendChild(document.createTextNode(fieldDetail.frame));
           break;
         }
         default: {
-          // Should replace with css
-          if (fieldDetail.elementId == this.targetId) {
-            td.setAttribute("class", "autofill-target-field");
-          }
           if (!fieldDetail.isVisible) {
-            td.setAttribute("class", "autofill-invisible-field");
+            td.classList.add("autofill-invisible-field");
           }
 
-          text = this.fieldDetailToColumnValue(column.id, fieldDetail);
+          const text = this.fieldDetailToColumnValue(column.id, fieldDetail);
+          td.appendChild(document.createTextNode(text));
           break;
         }
       }
-
-      if (text) {
-        td.appendChild(document.createTextNode(text));
-      }
       tr.appendChild(td);
     }
-    rootRowCount--;
-    sectionRowCount--;
-    frameRowCount--;
+
+    if (nthSection % 2) {
+      tr.classList.add("autofill-section-even");
+    }
     tbody.appendChild(tr);
   }
 
-  let previousSelected;
-  document.querySelectorAll(".treeRow").forEach(row => {
-    row.addEventListener("click", function() {
-      previousSelected?.classList.remove("selected");
-      previousSelected = this;
-      this.classList.toggle("selected");
+  document.querySelectorAll(".field-list-item").forEach(tr => {
+    tr.addEventListener("click", function() {
+      //if (["col-root", "col-section", "col-frame"].includes(event.target.id)) {
+      let rows;
+      if (event.target.hasAttribute("rowspan")) {
+        rows = getSpannedRows(event.target);
+      } else {
+        rows = [tr];
+      }
 
-      // TODO: Show background for selected elements
+      for (const row of rows) {
+        if (gCurrentSelectedRows.has(row)) {
+          row.classList.remove("selected");
+          gCurrentSelectedRows.delete(row);
+          removeElementBackgroundColor(gRowToSelectorMap.get(row));
+        } else {
+          row.classList.toggle("selected");
+          gCurrentSelectedRows.add(row);
+          setElementBackgroundColor(gRowToSelectorMap.get(row));
+        }
+      }
     });
   });
 }
@@ -378,6 +465,6 @@ browser.runtime.onMessage.addListener((request) => {
 
   if (request.type === 'refresh') {
     const json = JSON.stringify(request.data);
-    updateFieldsInfo(null, request.data)
+    updateFieldsInfo(request.data)
   }
 });

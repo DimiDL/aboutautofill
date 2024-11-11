@@ -8,8 +8,8 @@
     <script src="./autofill-inspector.js"></script>
     <script src="./libs/html2canvas.min.js"></script>
   </head>
-  <body id="autofill-panel" class="theme-body">
-    <div class="mainFrame">
+  <body class="theme-body">
+    <div class="autofill-panel">
       <div id="field" class="devtools-toolbar" role="toolbar">
         <button id="autofill-inspect-start-button">Click to Inspect</button>
         <span class="devtools-separator"></span>
@@ -22,6 +22,8 @@
           <input type="checkbox" class="devtools-checkbox"/>
           Show Unknown
         </label>
+        <span class="devtools-separator"></span>
+        <button id="autofill-inspect-element-button" title="Inspect Selected Element" class="devtools-button autofill-inspect-button"></button>
         <span class="devtools-separator"></span>
         <button id="autofill-screenshot-button" title="Screenshot form" class="devtools-button autofill-screenshot-button"></button>
         <span class="devtools-separator"></span>
@@ -40,16 +42,18 @@
           Autofill Test Credit Card
         </label>
       </div>
-      <span>
-        <table id="form-analsysis-table" class="treeTable">
-          <thead>
-            <tr id="form-analysis-head-row" class="treeHeaderRow"></tr>
-          </thead>
-          <tbody id="form-analysis-table-body">
-            <!-- data is generated in javascript -->
-          </tbody>
-        </table>
-      </span>
+      <div class="field-list-container">
+        <div class="field-list-scroll">
+          <table class="field-list-table">
+            <thead class="field-list-headers-group">
+              <tr id="form-analysis-head-row" class="field-list-headers"></tr>
+            </thead>
+            <tbody id="form-analysis-table-body">
+              <!-- data is generated in javascript -->
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </body>
 </html>

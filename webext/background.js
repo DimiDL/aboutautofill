@@ -105,15 +105,6 @@ async function handleMessage(request, sender, sendResponse) {
       download(blob, filename);
       break;
     }
-    case "export-inspect": {
-      const tab = await browser.tabs.get(request.tabId);
-      const urlObj = new URL(tab.url);
-      const filename = `inspect-${urlObj.hostname}.png`;
-      const dataUrl = await browser.aboutautofill.test();
-      const blob = dataURLToBlob(dataUrl);
-      download(blob, filename);
-      break;
-    }
     case "report": {
       // Need attachmenbt, url, summary, and description
       browser.tabs.create({
