@@ -3,9 +3,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 //import freezeDry from './libs/freeze-dry.es.js'
 
-let gCurrentSelectedRows = new Set();
-let gRowToSelectorMap = new Map();
+let gRowToFieldDetailMap = new Map();
 
+function inspectIdToElementSelector(id) {
+  return `[data-moz-autofill-inspect-id="${id}"]`;
+}
 function initAutofillInspectorPanel() {
   const button = document.getElementById("autofill-inspect-start-button");
   button.addEventListener("click", () => {
@@ -17,11 +19,12 @@ function initAutofillInspectorPanel() {
 
   const inspectElementButton = document.getElementById("autofill-inspect-element-button");
   inspectElementButton.addEventListener("click", () => {
-    const row = gCurrentSelectedRows.values().next().value;
-    const selector = gRowToSelectorMap.get(row);
+    const row = document.querySelector("tr .selected");
+    const fieldDetail = gRowToFieldDetailMap.get(row);
     const js = `
       (function() {
-        inspect(document.querySelector('${selector}'));
+        const selector = '${inspectIdToElementSelector(fieldDetail.inspectId)}'
+        inspect(document.querySelector(selector));
       })();
     `;
     browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
@@ -165,52 +168,74 @@ function fieldDetailToColumnValue(columnId, fieldDetail) {
   return fieldDetail[fieldName];
 }
 
-// TODO: FormAutofill uses Inspect Field to mark id for <iframe>
-// TODO: We should use overlay div instead of setting backgroud
-function setElementBackgroundColor(selector) {
+function scrollIntoView(inspectId) {
   const js = `
     (function() {
-      const element = document.querySelector('${selector}');
+      const selector = '${inspectIdToElementSelector(inspectId)}'
+      const element = document.querySelector(selector);
       if (!element) {
-        const iframes = doc.querySelectorAll("iframe");
-        for (let iframe of iframes) {
-          element = document.querySelector('${selector}');
-          if (element) {
-            break;
-          }
-        }
+        return;
       }
+      const rect = element.getBoundingClientRect();
+      const isInViewport = (
+        rect.top >= 0 &&
+        rect.left >= 0 &&
+        rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+        rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+      );
 
-      if (element) {
-        if (!element.hasAttribute('data-original-bg')) {
-          element.setAttribute('data-original-bg', window.getComputedStyle(element).backgroundColor);
-        }
-        element.style.backgroundColor = 'lightyellow';
+      if (!isInViewport) {
+        element.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});
       }
     })();
   `;
   browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
 }
 
-function removeElementBackgroundColor(selector) {
+// TODO: FormAutofill uses Inspect Field to mark id for <iframe>
+// TODO: We should use overlay div instead of setting backgroud
+function addHighlightOverlay(type, inspectId) {
+  const color = type == 'select' ? 'blue' : 'red';
+  const bgColor = type == 'select' ? 'rgba(0, 0, 255, 0.2)' : 'rgba(255, 0, 0, 0.2)';
+  const zIndex = type == 'select' ? 9999 : 9998;
+
   const js = `
     (function() {
-      const element = document.querySelector('${selector}');
+      const selector = '${inspectIdToElementSelector(inspectId)}'
+      const element = document.querySelector(selector);
       if (!element) {
-        const iframes = doc.querySelectorAll("iframe");
-        for (let iframe of iframes) {
-          element = document.querySelector('${selector}');
-          if (element) {
-            break;
-          }
-        }
+        return;
       }
 
-      if (element && element.hasAttribute('data-original-bg')) {
-        // Reset to the original background color
-        element.style.backgroundColor = element.getAttribute('data-original-bg');
-        element.removeAttribute('data-original-bg');
-      }
+      const highlightOverlay = document.createElement("div");
+      highlightOverlay.classList.add("moz-autofill-overlay");
+      highlightOverlay.id = "moz-${type}-highlight-overlay-${inspectId}";
+      document.body.appendChild(highlightOverlay);
+
+      Object.assign(highlightOverlay.style, {
+        position: "absolute",
+        backgroundColor: "${bgColor}",
+        border: "2px solid ${color}",
+        zIndex: ${zIndex},
+        pointerEvents: "none",
+      });
+
+      const rect = element.getBoundingClientRect();
+      highlightOverlay.style.top = rect.top + window.scrollY + 'px';
+      highlightOverlay.style.left = rect.left + window.scrollX + 'px';
+      highlightOverlay.style.width = rect.width + 'px';
+      highlightOverlay.style.height = rect.height + 'px';
+    })();
+  `;
+  browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
+}
+
+// Type should be either `select` or `hover`
+function removeHighlightOverlay(type, inspectId) {
+  const js = `
+    (function() {
+      const overlay = document.getElementById('moz-${type}-highlight-overlay-${inspectId}');
+      overlay?.remove();
     })();
   `;
   browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
@@ -233,54 +258,17 @@ function getSpannedRows(td) {
   return spannedRows;
 }
 
-function setupRowMouseOver(tr, selector) {
-  gRowToSelectorMap.set(tr, selector);
+function setupRowMouseOver(tr, inspectId) {
   tr.addEventListener("mouseover", (event) => {
     if (event.target.hasAttribute("rowspan")) {
       tr.classList.add('className', 'autofill-hide-highlight');
       return;
     }
 
-    const alreadySelected = gCurrentSelectedRows.has(tr);
-
     event.preventDefault();
-    const js = `
-      (function() {
-        function scrollToElementIfNotInView(element) {
-          const rect = element.getBoundingClientRect();
-          const isInViewport = (
-            rect.top >= 0 &&
-            rect.left >= 0 &&
-            rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
-            rect.right <= (window.innerWidth || document.documentElement.clientWidth)
-          );
 
-          if (!isInViewport) {
-            element.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});
-          }
-        }
-
-        const element = document.querySelector('${selector}');
-        if (!element) {
-          const iframes = doc.querySelectorAll("iframe");
-          for (let iframe of iframes) {
-            element = document.querySelector('${selector}');
-            if (element) {
-              break;
-            }
-          }
-        }
-
-        if (element) {
-          if (!${alreadySelected}) {
-            element.setAttribute('data-original-bg', window.getComputedStyle(element).backgroundColor);
-            element.style.backgroundColor = 'lightblue';
-          }
-          scrollToElementIfNotInView(element);
-        }
-      })();
-    `;
-    browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
+    addHighlightOverlay("hover", inspectId);
+    scrollIntoView(inspectId);
   });
 
   tr.addEventListener("mouseout", (event) => {
@@ -289,33 +277,8 @@ function setupRowMouseOver(tr, selector) {
       return;
     }
 
-    if (gCurrentSelectedRows.has(tr)) {
-      return;
-    }
-
     event.preventDefault();
-    const js = `
-      (function() {
-        const element = document.querySelector('${selector}');
-        if (!element) {
-          const iframes = doc.querySelectorAll("iframe");
-          for (let iframe of iframes) {
-            element = document.querySelector('${selector}');
-            if (element) {
-              break;
-            }
-          }
-        }
-        if (element) {
-          if (element && element.hasAttribute('data-original-bg')) {
-            // Reset to the original background color
-            element.style.backgroundColor = element.getAttribute('data-original-bg');
-            element.removeAttribute('data-original-bg');
-          }
-        }
-      })();
-    `;
-    browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
+    removeHighlightOverlay("hover", gRowToFieldDetailMap.get(tr).inspectId);
   });
 }
 
@@ -349,9 +312,8 @@ function updateFieldsInfo(fieldDetails) {
     tr.classList.add("field-list-item");
 
     // Setup the mouse over handler for this row
-    const [id, name] = fieldDetail.identifier.split("/");
-    const selector = `[data-autofill-inspect-id="${JSON.parse(fieldDetail.elementId).id}"]`;
-    setupRowMouseOver(tr, selector);
+    gRowToFieldDetailMap.set(tr, fieldDetail);
+    setupRowMouseOver(tr, fieldDetail.inspectId);
 
     for (const column of cols) {
       if (!column.id) {
@@ -441,15 +403,12 @@ function updateFieldsInfo(fieldDetails) {
       }
 
       for (const row of rows) {
-        if (gCurrentSelectedRows.has(row)) {
-          row.classList.remove("selected");
-          gCurrentSelectedRows.delete(row);
-          removeElementBackgroundColor(gRowToSelectorMap.get(row));
+        if (row.classList.contains("selected")) {
+          removeHighlightOverlay("select", gRowToFieldDetailMap.get(row).inspectId);
         } else {
-          row.classList.toggle("selected");
-          gCurrentSelectedRows.add(row);
-          setElementBackgroundColor(gRowToSelectorMap.get(row));
+          addHighlightOverlay("select", gRowToFieldDetailMap.get(row).inspectId)
         }
+        row.classList.toggle("selected");
       }
     });
   });
