@@ -8,6 +8,50 @@ let gRowToFieldDetailMap = new Map();
 function inspectIdToElementSelector(id) {
   return `[data-moz-autofill-inspect-id="${id}"]`;
 }
+
+function hidePanel(id) {
+  const panel = document.getElementById(id)
+  panel.classList.remove("tooltip-visible", "tooltip-shown");
+  document.removeEventListener("click", hidePanel);
+}
+
+function showPanel(id, anchor) {
+  const panel = document.getElementById(id);
+  const rect = anchor.getBoundingClientRect();
+
+  panel.style.position = "absolute";
+  panel.style.left = `${rect.left + window.scrollX}px`;
+  panel.style.top = `${rect.bottom + window.scrollY}px`;
+  panel.style.zIndex = "9999";
+  panel.classList.add("tooltip-visible", "tooltip-shown");
+  event.stopPropagation();
+  document.addEventListener("click", () => hidePanel(id));
+}
+
+function initTestAddressPanel(id) {
+  const menuTemplate = document.getElementById("menu-template");
+  const panelNode = document.importNode(menuTemplate.content, true);
+  panelNode.firstElementChild.id = id;
+
+  const menuList = panelNode.querySelector("#menu-item-list");
+  const menuItemTemplate = document.getElementById("menu-item-template");
+
+  const menuItems = [
+    {title: "US", label: "US"},
+    {title: "CA", label: "CA"},
+  ];
+  menuItems.forEach((item) => {
+    const menuItemNode = document.importNode(menuItemTemplate.content, true);
+
+    const button = menuItemNode.querySelector("button");
+    button.setAttribute("title", item.title || "");
+    menuItemNode.querySelector(".label").textContent = item.label;
+
+    menuList.appendChild(menuItemNode);
+  });
+  document.body.appendChild(panelNode);
+}
+
 function initAutofillInspectorPanel() {
   browser.runtime.sendMessage({
     msg: "init",
@@ -36,7 +80,6 @@ function initAutofillInspectorPanel() {
   });
   // TODO: Support download + generate testcase
 
-  // TODO: Implement screenshot the selected DOM Element
   const screenshotButton = document.getElementById("autofill-screenshot-button");
   screenshotButton.addEventListener("click", async () => {
     browser.devtools.inspectedWindow.eval(
@@ -142,6 +185,13 @@ function initAutofillInspectorPanel() {
     });
   });
 
+  const id = "test-address-menu-list";
+  initTestAddressPanel(id);
+  const selectAddress = document.getElementById("autofill-add-address-select");
+  selectAddress.addEventListener("click", async () => {
+    showPanel(id, selectAddress);
+  });
+
   const headers = [
     {id: "col-root", text: "Root"},
     {id: "col-section", text: "Section"},
@@ -181,8 +231,6 @@ function scrollIntoView(fieldDetail) {
   });
 }
 
-// TODO: FormAutofill uses Inspect Field to mark id for <iframe>
-// TODO: We should use overlay div instead of setting backgroud
 function addHighlightOverlay(type, fieldDetail) {
   browser.runtime.sendMessage({
     msg: "highlight",

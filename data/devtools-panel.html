@@ -34,13 +34,19 @@
         <button id="autofill-report-button" title="Report Autofill Site Compatibility Issue" class="devtools-button autofill-report-button"></button>
         <label class="devtools-checkbox-label devtools-cache-checkbox">
           <input id="autofill-add-address-button" type="checkbox" class="devtools-checkbox"/>
-          Autofill Test Address
+          Show Test Address
         </label>
+        <button id="autofill-add-address-select" class="devtools-button devtools-dropdown-button" title="Select Test Adddresses">
+          <span class="title">All Countries</span>
+        </button>
         <span class="devtools-separator"></span>
         <label class="devtools-checkbox-label devtools-cache-checkbox">
           <input id="autofill-add-credit-card-button" type="checkbox" class="devtools-checkbox"/>
-          Autofill Test Credit Card
+          Show Test Credit Card
         </label>
+        <button id="autofill-add-credit-card-select" class="devtools-button devtools-dropdown-button" title="Select Test Credit Cards">
+          <span class="title">All Cards</span>
+        </button>
       </div>
       <div class="field-list-container">
         <div class="field-list-scroll">
@@ -55,5 +61,22 @@
         </div>
       </div>
     </div>
+
+    <template id="menu-template">
+      <div class="tooltip-container tooltip-bottom" type="doorhanger">
+        <div class="tooltip-panel">
+          <div role="menu" class="checkbox-container menu-standard-padding" id="menu-item-list"></div>
+        </div>
+        <div class="tooltip-arrow"></div>
+      </div>
+    </template>
+
+    <template id="menu-item-template">
+      <li class="menuitem" role="presentation">
+        <button class="command menu-item" role="menuitem">
+          <span class="label"></span>
+        </button>
+      </li>
+    </template>
   </body>
 </html>
