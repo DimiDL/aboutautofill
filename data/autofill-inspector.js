@@ -5,51 +5,41 @@
 
 let gRowToFieldDetailMap = new Map();
 
+async function loadJSONData(fielname) {
+  try {
+    const url = browser.runtime.getURL(fielname);
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error("Network response was not ok " + response.statusText);
+    }
+
+    const data = await response.json();
+    console.log("Data loaded:", data);
+
+    return data;
+  } catch (error) {
+    console.error("Failed to load JSON data:", error);
+  }
+}
+
+let gTestAddresses;
+async function getTestAddresses() {
+  if (!gTestAddresses) {
+    gTestAddresses = await loadJSONData("data/test-addresses.json");
+  }
+  return gTestAddresses;
+}
+
+let gTestCreditCards;
+async function getTestCreditCards() {
+  if (!gTestCreditCards) {
+    gTestCreditCards = await loadJSONData("data/test-credit-cards.json");
+  }
+  return gTestCreditCards;
+}
 function inspectIdToElementSelector(id) {
   return `[data-moz-autofill-inspect-id="${id}"]`;
-}
-
-function hidePanel(id) {
-  const panel = document.getElementById(id)
-  panel.classList.remove("tooltip-visible", "tooltip-shown");
-  document.removeEventListener("click", hidePanel);
-}
-
-function showPanel(id, anchor) {
-  const panel = document.getElementById(id);
-  const rect = anchor.getBoundingClientRect();
-
-  panel.style.position = "absolute";
-  panel.style.left = `${rect.left + window.scrollX}px`;
-  panel.style.top = `${rect.bottom + window.scrollY}px`;
-  panel.style.zIndex = "9999";
-  panel.classList.add("tooltip-visible", "tooltip-shown");
-  event.stopPropagation();
-  document.addEventListener("click", () => hidePanel(id));
-}
-
-function initTestAddressPanel(id) {
-  const menuTemplate = document.getElementById("menu-template");
-  const panelNode = document.importNode(menuTemplate.content, true);
-  panelNode.firstElementChild.id = id;
-
-  const menuList = panelNode.querySelector("#menu-item-list");
-  const menuItemTemplate = document.getElementById("menu-item-template");
-
-  const menuItems = [
-    {title: "US", label: "US"},
-    {title: "CA", label: "CA"},
-  ];
-  menuItems.forEach((item) => {
-    const menuItemNode = document.importNode(menuItemTemplate.content, true);
-
-    const button = menuItemNode.querySelector("button");
-    button.setAttribute("title", item.title || "");
-    menuItemNode.querySelector(".label").textContent = item.label;
-
-    menuList.appendChild(menuItemNode);
-  });
-  document.body.appendChild(panelNode);
 }
 
 function initAutofillInspectorPanel() {
@@ -125,31 +115,16 @@ function initAutofillInspectorPanel() {
   const addAddressButton = document.getElementById("autofill-add-address-button");
   const addCreditCardButton = document.getElementById("autofill-add-credit-card-button");
 
-  function onAddRecord() {
+  async function onAddRecord() {
     const records = [];
     if (addAddressButton.checked) {
-      records.push({
-        "given-name": "John",
-        "additional-name": "R.",
-        "family-name": "Smith",
-        organization: "World Wide Web Consortium",
-        "street-address": "32 Vassar Street\nMIT Room 32-G524",
-        "address-level2": "Cambridge",
-        "address-level1": "MA",
-        "postal-code": "02139",
-        country: "US",
-        tel: "+16172535702",
-        email: "timbl@w3.org",
-      });
+      const addresses = await getTestAddresses();
+      records.push(...addresses);
     };
 
     if (addCreditCardButton.checked) {
-      records.push({
-        "cc-name": "John Doe",
-        "cc-number": "4111111111111111",
-        "cc-exp-month": 4,
-        "cc-exp-year": new Date().getFullYear(),
-      });
+      const creditcards = await getTestCreditCards();
+      records.push(...creditcards);
     }
 
     browser.runtime.sendMessage({
@@ -183,13 +158,6 @@ function initAutofillInspectorPanel() {
       a.click();
       document.body.removeChild(a);
     });
-  });
-
-  const id = "test-address-menu-list";
-  initTestAddressPanel(id);
-  const selectAddress = document.getElementById("autofill-add-address-select");
-  selectAddress.addEventListener("click", async () => {
-    showPanel(id, selectAddress);
   });
 
   const headers = [

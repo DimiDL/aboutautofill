@@ -23,7 +23,9 @@
   ],
 
   "web_accessible_resources": [
-    "data/libs/freeze-dry.es.js"
+    "data/libs/freeze-dry.es.js",
+    "data/test-addresses.json",
+    "data/test-credit-cards.json"
   ],
 
   "devtools_page": "data/devtools-opener.html",
