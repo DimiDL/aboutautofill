@@ -4,19 +4,96 @@
 //import freezeDry from './libs/freeze-dry.es.js'
 
 let gRowToFieldDetailMap = new Map();
+let gInspectedFieldDetails;
 
-async function loadJSONData(fielname) {
+function getAllCreditCardFieldType() {
+  return [
+    "cc-name",
+    "cc-given-name",
+    "cc-additional-name",
+    "cc-family-name",
+    "cc-number",
+    "cc-exp-month",
+    "cc-exp-year",
+    "cc-exp",
+    "cc-type",
+    "cc-csc",
+  ];
+}
+
+function getAllAddressFieldType() {
+ return [
+    "name",
+    "given-name",
+    "additional-name",
+    "family-name",
+    "organization",
+    "email",
+    "street-address",
+    "address-line1",
+    "address-line2",
+    "address-line3",
+    "address-level1",
+    "address-level2",
+    "address-streetname",
+    "address-housenumber",
+    "postal-code",
+    "country",
+    "country-name",
+    "tel",
+    "tel-country-code",
+    "tel-national",
+    "tel-area-code",
+    "tel-local",
+    "tel-local-prefix",
+    "tel-local-suffix",
+    "tel-extension",
+ ];
+}
+
+function fieldDetailsToTestExpectedResult(fieldDetails) {
+  const sections = [];
+  let rootIndex;
+  let sectionIndex;
+  for (const fieldDetail of fieldDetails) {
+    if (fieldDetail.rootIndex != rootIndex ||
+        fieldDetail.sectionIndex != sectionIndex) {
+      rootIndex = fieldDetail.rootIndex;
+      sectionIndex = fieldDetail.sectionIndex;
+
+      expectedSection = {
+        fields: [],
+      };
+      sections.push(expectedSection);
+    }
+    let expectedField = {
+      fieldName: fieldDetail.fieldName,
+      reason: fieldDetail.reason,
+    };
+    if (fieldDetail.part) {
+      expectedField.part = fieldDetail.part;
+    }
+    expectedSection.fields.push(expectedField);
+  }
+  return sections;
+}
+
+async function loadData(filename) {
   try {
-    const url = browser.runtime.getURL(fielname);
+    const url = browser.runtime.getURL(filename);
     const response = await fetch(url);
 
     if (!response.ok) {
       throw new Error("Network response was not ok " + response.statusText);
     }
 
-    const data = await response.json();
-    console.log("Data loaded:", data);
-
+    let data;
+    const extension = url.split('.').pop().toLowerCase();
+    if (extension === "json") {
+      data = await response.json();
+    } else {
+      data = await response.text();
+    }
     return data;
   } catch (error) {
     console.error("Failed to load JSON data:", error);
@@ -26,7 +103,7 @@ async function loadJSONData(fielname) {
 let gTestAddresses;
 async function getTestAddresses() {
   if (!gTestAddresses) {
-    gTestAddresses = await loadJSONData("data/test-addresses.json");
+    gTestAddresses = await loadData("data/test-addresses.json");
   }
   return gTestAddresses;
 }
@@ -34,10 +111,15 @@ async function getTestAddresses() {
 let gTestCreditCards;
 async function getTestCreditCards() {
   if (!gTestCreditCards) {
-    gTestCreditCards = await loadJSONData("data/test-credit-cards.json");
+    gTestCreditCards = await loadData("data/test-credit-cards.json");
   }
   return gTestCreditCards;
 }
+
+async function getTestTemplate() {
+  return await loadData("data/gecko-autofill-test-template.js");
+}
+
 function inspectIdToElementSelector(id) {
   return `[data-moz-autofill-inspect-id="${id}"]`;
 }
@@ -50,6 +132,7 @@ function initAutofillInspectorPanel() {
 
   const button = document.getElementById("autofill-inspect-start-button");
   button.addEventListener("click", () => {
+    gInspectedFieldDetails = null;
     browser.runtime.sendMessage({
       msg: "inspect",
       tabId: browser.devtools.inspectedWindow.tabId,
@@ -68,7 +151,6 @@ function initAutofillInspectorPanel() {
     `;
     browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
   });
-  // TODO: Support download + generate testcase
 
   const screenshotButton = document.getElementById("autofill-screenshot-button");
   screenshotButton.addEventListener("click", async () => {
@@ -102,6 +184,10 @@ function initAutofillInspectorPanel() {
 
 
   // TODO: Make the bugzilla to save more fields
+  // -- attach screenshot
+  // -- attach testcase
+  // -- attach claasified result
+  // -- attach downloaded file
   const reportButton = document.getElementById("autofill-report-button");
   reportButton.addEventListener("click", async () => {
     browser.runtime.sendMessage({
@@ -110,8 +196,83 @@ function initAutofillInspectorPanel() {
     });
   });
 
-  // TODO: Support Read JSON for Test Records
-  // TODO: Support dropdown to choose the country for selected address, type for selected credit card
+  let editing = false;
+  const editFieldButton = document.getElementById("autofill-edit-field-button");
+  editFieldButton.addEventListener("click", async (event) => {
+    let hasChanged = false;
+    const isEditing = editFieldButton.classList.contains("editing");
+    const editables = document.querySelectorAll("td#col-fieldName");
+    editables.forEach(cell => {
+      if (isEditing) {
+        const select = cell.querySelector("select");
+        if (select.classList.contains("changed")) {
+          hasChanged = true;
+          const tr = select.closest("tr");
+          const fieldDetail = gRowToFieldDetailMap.get(tr);
+          browser.runtime.sendMessage({
+            msg: "change-field-attribute",
+            tabId: browser.devtools.inspectedWindow.tabId,
+            frameId: fieldDetail.frameId,
+            inspectId: fieldDetail.inspectId,
+            attribute: "autocomplete",
+            value: select.value,
+          });
+        }
+        cell.textContent = select.value;
+        select.remove();
+      } else {
+        const select = document.createElement("select");
+
+        const options = [...getAllAddressFieldType(), ...getAllCreditCardFieldType()];
+        options.forEach(optionText => {
+          const option = document.createElement("option");
+          option.value = optionText;
+          option.textContent = optionText;
+          if (optionText === cell.textContent) {
+            select.insertBefore(option, select.firstChild);
+            option.selected = true;
+          } else {
+            select.appendChild(option);
+          }
+        });
+
+        // Avoid triggering click for the row
+        select.addEventListener("click", (event) => event.stopPropagation());
+        select.addEventListener("change", () => {
+          if (select.selectedIndex !== 0) {
+            select.classList.add("changed");
+          } else {
+            select.classList.remove("changed");
+          }
+        });
+
+        cell.innerHTML = "";
+        cell.appendChild(select);
+      }
+    });
+    if (isEditing && hasChanged) {
+      // Send a message to run inspect again
+      gInspectedFieldDetails = null;
+      browser.runtime.sendMessage({
+        msg: "inspect",
+        tabId: browser.devtools.inspectedWindow.tabId,
+      });
+    }
+    editFieldButton.classList.toggle("editing");
+  });
+
+  const generateTestButton = document.getElementById("autofill-generate-test-button");
+  generateTestButton.addEventListener("click", async () => {
+    const template = await getTestTemplate();
+    const result = fieldDetailsToTestExpectedResult(gInspectedFieldDetails);
+    browser.runtime.sendMessage({
+      msg: "generate-testcase",
+      tabId: browser.devtools.inspectedWindow.tabId,
+      template,
+      result,
+    });
+  });
+
   const addAddressButton = document.getElementById("autofill-add-address-button");
   const addCreditCardButton = document.getElementById("autofill-add-credit-card-button");
 
@@ -137,6 +298,7 @@ function initAutofillInspectorPanel() {
   addAddressButton.addEventListener("change", (event) => onAddRecord());
   addCreditCardButton.addEventListener("change", (event) => onAddRecord());
 
+  // TODO: Maybe we should just export the HTML?
   const exportButton = document.getElementById("autofill-export-button");
   exportButton.addEventListener("click", () => {
     // Use html2Canvas to screenshot
@@ -271,6 +433,9 @@ function findNextIndex(array, currentIndex, condition) {
 }
 
 function updateFieldsInfo(fieldDetails) {
+  // Clone the field detail array
+  gInspectedFieldDetails = Array.from(fieldDetails, item => ({ ...item }));
+
   const tbody = document.getElementById("form-analysis-table-body");
   while (tbody.firstChild) {
     tbody.firstChild.remove();
@@ -283,7 +448,7 @@ function updateFieldsInfo(fieldDetails) {
   let sectionNextIndex;
   let frameNextIndex;
 
-  for (let index = 0; index < fieldDetails?.length; index++) {
+  for (let index = 0; index < gInspectedFieldDetails?.length; index++) {
     const fieldDetail = fieldDetails[index];
 
     const tr = document.createElement("tr");
@@ -401,7 +566,7 @@ browser.runtime.onMessage.addListener((request) => {
   }
 
   switch (request.msg) {
-    case 'refresh': {
+    case 'inspect_complete': {
       updateFieldsInfo(request.data);
       break;
     }

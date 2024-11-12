@@ -131,6 +131,27 @@ async function removeHighlightOverlay({ tabId, type, inspectId, frameId }) {
   });
 }
 
+function changeFieldAttribute({ tabId, inspectId, frameId, attribute, value }) {
+  browser.scripting.executeScript({
+    target: {
+      tabId,
+      frameIds: [frameId],
+    },
+    func: (inspectId, attribute, value) => {
+      const selector = `[data-moz-autofill-inspect-id="${inspectId}"]`;
+      const element = document.querySelector(selector);
+      if (!element) {
+        return;
+      }
+      const originalValue = element.getAttribute(attribute);
+      element.setAttribute(attribute, value)
+      element.setAttribute(`data-moz-autofill-inspector-change-${attribute}`, originalValue)
+    },
+    args: [inspectId, attribute, value]
+  });
+
+}
+
 function download(blob, filename) {
   const url = URL.createObjectURL(blob);
 
@@ -143,6 +164,7 @@ function download(blob, filename) {
     console.log("Download triggered successfully.");
     URL.revokeObjectURL(url); // Clean up the Blob URL after download
   }).catch((error) => {
+    // Dimi: Users cancel, just ignore it
     console.error("Error triggering download:", error);
   });
 }
@@ -174,7 +196,7 @@ async function handleMessage(request, sender, sendResponse) {
       await refresh(request);
       const result = await browser.aboutautofill.inspect(request.tabId);
       browser.runtime.sendMessage({
-        msg: 'refresh',
+        msg: 'inspect_complete',
         tabId: request.tabId,
         data: result
       }).catch(() => {});
@@ -208,6 +230,22 @@ async function handleMessage(request, sender, sendResponse) {
       download(blob, filename);
       break;
     }
+    case "generate-testcase": {
+      const tab = await browser.tabs.get(request.tabId);
+      const urlObj = new URL(tab.url);
+      const host = urlObj.hostname;
+      const fileName = `"${host}.html"`;
+      let text = request.template.replace("{{fileName}}", fileName);
+      let formattedJson = JSON.stringify(request.result, null, 2);
+      formattedJson = formattedJson.replace(/^/gm, ' '.repeat(6));
+      text = text.replace("{{expectedResult}}", formattedJson);
+      text = text.replace("{{filePath}}", `"fixtures/third_party/${host}/"`);
+
+      const blob = new Blob([text], { type: "text/plain" });
+      download(blob, `${host}.js`);
+      break;
+
+    }
     case "screenshot": {
       const tab = await browser.tabs.get(request.tabId);
       const urlObj = new URL(tab.url);
@@ -226,6 +264,10 @@ async function handleMessage(request, sender, sendResponse) {
     }
     case "set-test-records": {
       await browser.aboutautofill.setTestRecords(request.tabId, request.records);
+      break;
+    }
+    case "change-field-attribute": {
+      changeFieldAttribute(request);
       break;
     }
   }

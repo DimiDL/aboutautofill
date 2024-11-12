@@ -25,7 +25,8 @@
   "web_accessible_resources": [
     "data/libs/freeze-dry.es.js",
     "data/test-addresses.json",
-    "data/test-credit-cards.json"
+    "data/test-credit-cards.json",
+    "data/gecko-autofill-test-template.js"
   ],
 
   "devtools_page": "data/devtools-opener.html",

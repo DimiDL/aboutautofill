@@ -231,6 +231,14 @@ body,
   background-image: url("./icons/icon-reportissue.svg");
 }
 
+.devtools-button.autofill-edit-field-button::before {
+  background-image: url("./icons/edit-outline.svg");
+}
+
+.devtools-button.autofill-generate-test-button::before {
+  background-image: url("./icons/policies-active.svg");
+}
+
 /* From netmonitor/src/assets/styles/Toolbar.css */
 .devtools-toolbar .devtools-checkbox {
   position: relative;
@@ -253,3 +261,7 @@ body,
   margin-inline-end: 7px;
 }
 
+/* select */
+.field-list-item td select.changed {
+  border: 2px solid red;
+}
