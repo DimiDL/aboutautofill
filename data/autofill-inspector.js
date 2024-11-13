@@ -338,7 +338,7 @@ function initAutofillInspectorPanel() {
     browser.runtime.sendMessage({
       msg: "download",
       tabId: browser.devtools.inspectedWindow.tabId,
-      fileName: "screenshot.png",
+      filename: "screenshot.png",
       dataUrl,
     });
   });

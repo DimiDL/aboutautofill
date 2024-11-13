@@ -131,24 +131,73 @@ async function removeHighlightOverlay({ tabId, type, inspectId, frameId }) {
   });
 }
 
-let gPendingFreezeEvents = [];
 async function freezePage(tabId) {
-  const promise = new Promise((resolve, reject) => {
-    gPendingFreezeEvents.push(resolve);
-  });
+  const urlToPath = new Map();
+  const pages = [];
+  let frames = await browser.webNavigation.getAllFrames({ tabId });
+  const mainFrame = frames.find(frame => frame.parentFrameId == -1);
+  const iframes = frames.filter(frame => frame.parentFrameId == mainFrame.frameId);
 
-  browser.scripting.executeScript({
-    target: { tabId },
-    files: ["./webext/content-script.js"],
-  });
+  frames = [...iframes, mainFrame];
 
-  const html = await promise;
-  return new Blob([html], { type: 'text/html' });
+  for (let idx = 0; idx < frames.length; idx++) {
+    const frame = frames[idx];
+    const promise = new Promise((resolve) => {
+      function waitForFreeze(request, sender, sendResponse) {
+        if (request.msg === "freeze-complete") {
+          resolve(request.result);
+          browser.runtime.onMessage.removeListener(waitForFreeze);
+        }
+      }
+      browser.runtime.onMessage.addListener(waitForFreeze);
+    });
+
+    browser.scripting.executeScript({
+      target: {
+        tabId,
+        frameIds: [frame.frameId],
+      },
+      files: ["./webext/content-script.js"],
+    });
+    let html = await promise;
+
+    let filename;
+    if (idx == frames.length - 1) {
+      filename = `${new URL(frame.url).host}.html`;
+      for (let [url, path] of urlToPath) {
+        url = url.replace(/&/g, "&amp;");
+        console.log("url is " + url);
+        const regexURL = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`<iframe\\s+[^>]*src=["']${regexURL}["']`, 'i');
+        if (html.match(regex)) {
+          console.log("ok..can find with regex");
+        } else {
+          console.log("ok..canNOT find with regex");
+        }
+        if (html.includes(url)) {
+          console.log("ok..can find with include");
+        } else {
+          console.log("ok..canNOT find with include");
+        }
+        html = html.replace(regex, `<iframe src="${path}"`);
+      }
+    } else {
+      filename = `${new URL(frame.url).host}/${idx}.html`;
+      urlToPath.set(frame.url, filename);
+      //continue;
+    }
+    pages.push({
+      filename,
+      blob: new Blob([html], { type: 'text/html' }),
+    })
+  }
+
+  return pages;
 }
 
 function generateTest(template, inspectResult, host) {
-  const fileName = `"${host}.html"`;
-  let text = template.replace("{{fileName}}", fileName);
+  const filename = `"${host}.html"`;
+  let text = template.replace("{{filename}}", filename);
   let formattedJson = JSON.stringify(inspectResult, null, 2);
   formattedJson = formattedJson.replace(/^/gm, ' '.repeat(6));
   text = text.replace("{{expectedResult}}", formattedJson);
@@ -188,13 +237,13 @@ function changeFieldAttribute({ tabId, inspectId, frameId, attribute, value }) {
 
 }
 
-function download(blob, fileName) {
+function download(blob, filename) {
   const url = URL.createObjectURL(blob);
 
   // Trigger download with a save-as dialog
   browser.downloads.download({
     url: url,
-    filename: fileName,
+    filename: filename,
     saveAs: true
   }).then(() => {
     console.log("Download triggered successfully.");
@@ -252,22 +301,19 @@ async function handleMessage(request, sender, sendResponse) {
       break;
     }
     case "freeze": {
-      if (gPendingFreezeEvents.length) {
-        console.log("There is a ongoing freeze task");
-        break;
-      }
       const tab = await browser.tabs.get(request.tabId);
       const urlObj = new URL(tab.url);
-      const fileName = `freeze-${urlObj.hostname}.html`;
 
-      const blob = await freezePage(request.tabId);
-      download(blob, fileName);
-      break;
-    }
-    case "freeze-complete": {
-      const resolve = gPendingFreezeEvents.pop();
-      dump("[Dimi]resolve " + resolve + "\n");
-      resolve?.(request.result);
+      const url = browser.runtime.getURL("./data/libs/jszip.js");
+      import(url).then(async module => {
+        const zip = JSZip();
+        const pages = await freezePage(request.tabId);
+        for (const page of pages) {
+          zip.file(page.filename, page.blob);
+        }
+        const blob = await zip.generateAsync({ type: "blob" });
+        download(blob, `testcase-${urlObj.hostname}.zip`);
+      });
       break;
     }
     case "generate-testcase": {
@@ -277,8 +323,6 @@ async function handleMessage(request, sender, sendResponse) {
 
       const url = browser.runtime.getURL("./data/libs/jszip.js");
       import(url).then(async module => {
-        const jszip = JSZip();
-
         const dir = `test-${host}`;
         const zip = JSZip();
 
@@ -287,8 +331,10 @@ async function handleMessage(request, sender, sendResponse) {
         zip.file(`${dir}/${host}.js`, testcase);
 
         // Web Page Freezed Markup
-        const pageBlob = await freezePage(request.tabId);
-        zip.file(`${dir}/${host}.html`, pageBlob);
+        const pages = await freezePage(request.tabId);
+        for (const page of pages) {
+          zip.file(page.filename, page.blob);
+        }
 
         // Web Page Screenshot
         const screenBlob = await screenshotPage(
@@ -308,7 +354,7 @@ async function handleMessage(request, sender, sendResponse) {
     case "screenshot": {
       const tab = await browser.tabs.get(request.tabId);
       const urlObj = new URL(tab.url);
-      const fileName = `dom-${urlObj.hostname}.png`;
+      const filename = `dom-${urlObj.hostname}.png`;
       const blob = await screenshotPage(
         request.tabId,
         request.x,
@@ -317,7 +363,7 @@ async function handleMessage(request, sender, sendResponse) {
         request.height
       );
 
-      download(blob, fileName);
+      download(blob, filename);
       break;
     }
     case "report": {
@@ -337,7 +383,7 @@ async function handleMessage(request, sender, sendResponse) {
     }
     case "download": {
       const blob = dataURLToBlob(request.dataUrl);
-      download(blob, request.fileName)
+      download(blob, request.filename)
       break;
     }
   }
