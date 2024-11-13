@@ -7,7 +7,28 @@
         "type": "function",
         "description": "Performs necessary startup functions",
         "async": true,
-        "parameters": []
+        "parameters": [
+          {
+            "type": "integer",
+            "name": "tabId"
+          },
+          {
+            "type": "integer",
+            "name": "x"
+          },
+          {
+            "type": "integer",
+            "name": "y"
+          },
+          {
+            "type": "integer",
+            "name": "width"
+          },
+          {
+            "type": "integer",
+            "name": "height"
+          }
+        ]
       },
       {
         "name": "inspect",

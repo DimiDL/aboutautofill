@@ -28,6 +28,11 @@ body,
 .devtools-toolbar {
   display: flex;
   align-items: center;
+
+  /* Copy from light-theme.css */
+  color: var(--theme-body-color);
+  background-color: var(--theme-toolbar-background);
+  border-color: var(--theme-splitter-color);
 }
 
 .autofill-panel > .devtools-toolbar {
@@ -41,7 +46,8 @@ body,
 }
 
 .autofill-panel {
-  display: block;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   overflow: hidden;
 }
@@ -49,10 +55,10 @@ body,
 /* Field list table */
 
 .field-list-container {
- display: flex;
+  display: flex;
   flex-direction: column;
   width: 100%;
-  height: 100%;
+  flex: 1;
   overflow: hidden;
   color: var(--theme-body-color);
 }
@@ -61,6 +67,7 @@ body,
   overflow-x: hidden;
   overflow-y: auto;
   width: 100% !important;
+  flex: 2;
 }
 
 .field-list-scroll table {
@@ -259,6 +266,15 @@ body,
 
 .devtools-toolbar .devtools-checkbox-label.devtools-cache-checkbox {
   margin-inline-end: 7px;
+}
+
+/* From netmonitor/src/assets/styles/StatusBar.css */
+.status-bar-label {
+  display: inline-flex;
+  margin-inline-end: 10px;
+  /* Status bar has just one line so, don't wrap labels */
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 /* select */

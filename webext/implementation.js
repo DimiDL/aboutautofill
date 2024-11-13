@@ -17,7 +17,29 @@ this.aboutautofill = class extends ExtensionAPI {
     const { tabManager } = context.extension;
     return {
       aboutautofill: {
-        async test() {
+        // CaptureTab. V3 Doesn't have this
+        async test(tabId, x, y, width, height) {
+          const { browser } = tabManager.get(tabId);
+          const windowGlobal = browser.browsingContext.currentWindowGlobal;
+          const rect = new context.xulBrowser.ownerGlobal.window.DOMRect(x, y, width, height);
+          const zoom = browser.browsingContext.fullZoom;
+          const scale = browser.browsingContext.topChromeWindow.devicePixelRatio || 1;
+          const image = await windowGlobal.drawSnapshot(rect, scale * zoom, "white");
+          const canvas = new OffscreenCanvas(image.width, image.height);
+
+          const ctx = canvas.getContext("bitmaprenderer", { alpha: false });
+          ctx.transferFromImageBitmap(image);
+          const blob = await canvas.convertToBlob({
+            type: `image/png`,
+          });
+
+          const dataURL = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(blob);
+          });
+          return dataURL;
         },
 
         async inspect(tabId) {

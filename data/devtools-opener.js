@@ -1,5 +1,3 @@
-console.log("[Dimi]devtools-opener.js\n");
-
 browser.devtools.panels
   .create(
     "Autofill", // title
@@ -13,15 +11,15 @@ browser.devtools.panels
 
 
 function panelShown() {
-  browser.runtime.sendMessage({
-    msg: "show",
-    tabId: browser.devtools.inspectedWindow.tabId,
-  });
+  //browser.runtime.sendMessage({
+    //msg: "show",
+    //tabId: browser.devtools.inspectedWindow.tabId,
+  //});
 }
 
 function panelHidden() {
-  browser.runtime.sendMessage({
-    msg: "hide",
-    tabId: browser.devtools.inspectedWindow.tabId,
-  });
+  //browser.runtime.sendMessage({
+    //msg: "hide",
+    //tabId: browser.devtools.inspectedWindow.tabId,
+  //});
 }

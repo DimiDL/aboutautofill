@@ -131,6 +131,42 @@ async function removeHighlightOverlay({ tabId, type, inspectId, frameId }) {
   });
 }
 
+let gPendingFreezeEvents = [];
+async function freezePage(tabId) {
+  const promise = new Promise((resolve, reject) => {
+    gPendingFreezeEvents.push(resolve);
+  });
+
+  browser.scripting.executeScript({
+    target: { tabId },
+    files: ["./webext/content-script.js"],
+  });
+
+  const html = await promise;
+  return new Blob([html], { type: 'text/html' });
+}
+
+function generateTest(template, inspectResult, host) {
+  const fileName = `"${host}.html"`;
+  let text = template.replace("{{fileName}}", fileName);
+  let formattedJson = JSON.stringify(inspectResult, null, 2);
+  formattedJson = formattedJson.replace(/^/gm, ' '.repeat(6));
+  text = text.replace("{{expectedResult}}", formattedJson);
+  text = text.replace("{{filePath}}", `"fixtures/third_party/${host}/"`);
+  return text;
+}
+
+async function screenshotPage(tabId, x, y, width, height) {
+  const dataUrl = await browser.aboutautofill.test(
+    tabId,
+    x,
+    y,
+    width,
+    height,
+  );
+  return dataURLToBlob(dataUrl);
+}
+
 function changeFieldAttribute({ tabId, inspectId, frameId, attribute, value }) {
   browser.scripting.executeScript({
     target: {
@@ -152,13 +188,13 @@ function changeFieldAttribute({ tabId, inspectId, frameId, attribute, value }) {
 
 }
 
-function download(blob, filename) {
+function download(blob, fileName) {
   const url = URL.createObjectURL(blob);
 
   // Trigger download with a save-as dialog
   browser.downloads.download({
     url: url,
-    filename: filename,
+    filename: fileName,
     saveAs: true
   }).then(() => {
     console.log("Download triggered successfully.");
@@ -187,6 +223,7 @@ function dataURLToBlob(url) {
  * When we receive the message, execute the given script in the given tab.
  */
 async function handleMessage(request, sender, sendResponse) {
+  console.log("receive msg " + request.msg + "");
   switch (request.msg) {
     case "hide": {
       await refresh(request);
@@ -215,44 +252,72 @@ async function handleMessage(request, sender, sendResponse) {
       break;
     }
     case "freeze": {
-      // TODO: Only executeScript when we have done it before
-      const results = await browser.scripting.executeScript({
-        target: { tabId: request.tabId },
-        files: ["./webext/content-script.js"],
-      });
+      if (gPendingFreezeEvents.length) {
+        console.log("There is a ongoing freeze task");
+        break;
+      }
+      const tab = await browser.tabs.get(request.tabId);
+      const urlObj = new URL(tab.url);
+      const fileName = `freeze-${urlObj.hostname}.html`;
+
+      const blob = await freezePage(request.tabId);
+      download(blob, fileName);
       break;
     }
     case "freeze-complete": {
-      const urlObj = new URL(sender.url);
-      const filename = `freeze-${urlObj.hostname}.html`;
-      const html = request.result;
-      const blob = new Blob([html], { type: 'text/html' });
-      download(blob, filename);
+      const resolve = gPendingFreezeEvents.pop();
+      dump("[Dimi]resolve " + resolve + "\n");
+      resolve?.(request.result);
       break;
     }
     case "generate-testcase": {
       const tab = await browser.tabs.get(request.tabId);
       const urlObj = new URL(tab.url);
       const host = urlObj.hostname;
-      const fileName = `"${host}.html"`;
-      let text = request.template.replace("{{fileName}}", fileName);
-      let formattedJson = JSON.stringify(request.result, null, 2);
-      formattedJson = formattedJson.replace(/^/gm, ' '.repeat(6));
-      text = text.replace("{{expectedResult}}", formattedJson);
-      text = text.replace("{{filePath}}", `"fixtures/third_party/${host}/"`);
 
-      const blob = new Blob([text], { type: "text/plain" });
-      download(blob, `${host}.js`);
+      const url = browser.runtime.getURL("./data/libs/jszip.js");
+      import(url).then(async module => {
+        const jszip = JSZip();
+
+        const dir = `test-${host}`;
+        const zip = JSZip();
+
+        // Testcase
+        const testcase = generateTest(request.template, request.result, host);
+        zip.file(`${dir}/${host}.js`, testcase);
+
+        // Web Page Freezed Markup
+        const pageBlob = await freezePage(request.tabId);
+        zip.file(`${dir}/${host}.html`, pageBlob);
+
+        // Web Page Screenshot
+        const screenBlob = await screenshotPage(
+          request.tabId,
+          request.x,
+          request.y,
+          request.width,
+          request.height
+        );
+        zip.file(`${dir}/${host}.png`, screenBlob);
+
+        const blob = await zip.generateAsync({ type: "blob" });
+        download(blob, `${host}.zip`);
+      });
       break;
-
     }
     case "screenshot": {
       const tab = await browser.tabs.get(request.tabId);
       const urlObj = new URL(tab.url);
-      const filename = `dom-${urlObj.hostname}.png`;
-      const dataUrl = await browser.tabs.captureTab(request.tabId, {rect: request.rect});
-      const blob = dataURLToBlob(dataUrl);
-      download(blob, filename);
+      const fileName = `dom-${urlObj.hostname}.png`;
+      const blob = await screenshotPage(
+        request.tabId,
+        request.x,
+        request.y,
+        request.width,
+        request.height
+      );
+
+      download(blob, fileName);
       break;
     }
     case "report": {
@@ -268,6 +333,11 @@ async function handleMessage(request, sender, sendResponse) {
     }
     case "change-field-attribute": {
       changeFieldAttribute(request);
+      break;
+    }
+    case "download": {
+      const blob = dataURLToBlob(request.dataUrl);
+      download(blob, request.fileName)
       break;
     }
   }

@@ -1,6 +1,6 @@
 {
   "description": "Show information about Autofill.",
-  "manifest_version": 2,
+  "manifest_version": 3,
   "name": "About Autofill",
   "version": "1.0",
   "browser_specific_settings": {
@@ -12,7 +12,6 @@
   },
   "homepage_url": "https://github.com/DimiDL/aboutautofill",
   "permissions": [
-    "<all_urls>",
     "contextMenus",
     "downloads",
     "menus",
@@ -22,11 +21,22 @@
     "webNavigation"
   ],
 
+   "host_permissions": [
+     "*://*/*"
+   ],
+
   "web_accessible_resources": [
-    "data/libs/freeze-dry.es.js",
-    "data/test-addresses.json",
-    "data/test-credit-cards.json",
-    "data/gecko-autofill-test-template.js"
+    {
+      "resources": [
+        "data/libs/freeze-dry.es.js",
+        "data/libs/jszip.js",
+        "data/libs/jszip.min.js",
+        "data/test-addresses.json",
+        "data/test-credit-cards.json",
+        "data/gecko-autofill-test-template.js"
+      ],
+      "matches": ["<all_urls>"]
+    }
   ],
 
   "devtools_page": "data/devtools-opener.html",
@@ -37,7 +47,8 @@
   },
 
   "background": {
-    "scripts": [ "webext/background.js" ]
+    "scripts": [ "webext/background.js" ],
+    "type": "module"
   },
 
   "experiment_apis": {

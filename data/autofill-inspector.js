@@ -100,6 +100,27 @@ async function loadData(filename) {
   }
 }
 
+async function screenshotInspectResult() {
+  // Use html2Canvas to screenshot
+  const element = document.querySelector(".autofill-panel");
+  const width = element.scrollWidth;
+  const height =
+    document.querySelector(".devtools-toolbar").scrollHeight +
+    document.querySelector(".field-list-scroll").scrollHeight
+  console.log("scroll hight is " + element.scrollHeight);
+
+  const canvas = await html2canvas(element, {
+    allowTaint: true,
+    useCORS: true,
+    x: 0,
+    y: 0,
+    width,
+    height: height,
+    windowHeight: height,
+  });
+  return canvas.toDataURL("image/png");
+}
+
 let gTestAddresses;
 async function getTestAddresses() {
   if (!gTestAddresses) {
@@ -161,19 +182,17 @@ function initAutofillInspectorPanel() {
       })`, (result) => {
         browser.runtime.sendMessage({
           msg: "screenshot",
-          rect: {
-            x: 0,
-            y: 0,
-            width: result.width,
-            height: result.height,
-          },
           tabId: browser.devtools.inspectedWindow.tabId,
+          x: 0,
+          y: 0,
+          width: result.width,
+          height: result.height,
         });
       }
     );
   });
 
-  // TODO: Support iframe, zip everything
+  // TODO: Support iframe
   const downloadButton = document.getElementById("autofill-download-button");
   downloadButton.addEventListener("click", async () => {
     browser.runtime.sendMessage({
@@ -181,7 +200,6 @@ function initAutofillInspectorPanel() {
       tabId: browser.devtools.inspectedWindow.tabId,
     });
   });
-
 
   // TODO: Make the bugzilla to save more fields
   // -- attach screenshot
@@ -202,6 +220,7 @@ function initAutofillInspectorPanel() {
     let hasChanged = false;
     const isEditing = editFieldButton.classList.contains("editing");
     const editables = document.querySelectorAll("td#col-fieldName");
+
     editables.forEach(cell => {
       if (isEditing) {
         const select = cell.querySelector("select");
@@ -263,13 +282,26 @@ function initAutofillInspectorPanel() {
 
   const generateTestButton = document.getElementById("autofill-generate-test-button");
   generateTestButton.addEventListener("click", async () => {
+    if (!gInspectedFieldDetails) {
+      // TODO: Trigger inspect
+    }
     const template = await getTestTemplate();
-    const result = fieldDetailsToTestExpectedResult(gInspectedFieldDetails);
+    const inspectResult = fieldDetailsToTestExpectedResult(gInspectedFieldDetails);
+    const ret = await browser.devtools.inspectedWindow.eval(
+      `({
+          width: document.documentElement.scrollWidth,
+          height: document.documentElement.scrollHeight,
+      })`
+    );
     browser.runtime.sendMessage({
       msg: "generate-testcase",
       tabId: browser.devtools.inspectedWindow.tabId,
       template,
-      result,
+      result: inspectResult,
+      x: 0,
+      y: 0,
+      width: ret[0].width,
+      height: ret[0].height,
     });
   });
 
@@ -300,25 +332,14 @@ function initAutofillInspectorPanel() {
 
   // TODO: Maybe we should just export the HTML?
   const exportButton = document.getElementById("autofill-export-button");
-  exportButton.addEventListener("click", () => {
+  exportButton.addEventListener("click", async () => {
     // Use html2Canvas to screenshot
-    const element = document.getElementById("autofill-panel");
-
-    const rect = element.getBoundingClientRect();
-
-    const canvas = document.createElement("canvas");
-    canvas.width = rect.width;
-    canvas.height = rect.height;
-    const context = canvas.getContext("2d");
-
-    html2canvas(element).then(canvas => {
-      const dataUrl = canvas.toDataURL("image/png");
-      const a = document.createElement("a");
-      a.href = dataUrl;
-      a.download = "screenshot.png";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+    const dataUrl = await screenshotInspectResult();
+    browser.runtime.sendMessage({
+      msg: "download",
+      tabId: browser.devtools.inspectedWindow.tabId,
+      fileName: "screenshot.png",
+      dataUrl,
     });
   });
 
