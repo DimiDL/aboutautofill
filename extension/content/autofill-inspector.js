@@ -192,7 +192,6 @@ function initAutofillInspectorPanel() {
     );
   });
 
-  // TODO: Support iframe
   const downloadButton = document.getElementById("autofill-download-button");
   downloadButton.addEventListener("click", async () => {
     browser.runtime.sendMessage({
@@ -228,6 +227,8 @@ function initAutofillInspectorPanel() {
           hasChanged = true;
           const tr = select.closest("tr");
           const fieldDetail = gRowToFieldDetailMap.get(tr);
+          // TODO: We should not change the underlying element.
+          // It will cause testcase not matches...
           browser.runtime.sendMessage({
             msg: "change-field-attribute",
             tabId: browser.devtools.inspectedWindow.tabId,
