@@ -1,7 +1,7 @@
 // onInstalled, but not onStartup, is called when the addon is installed.
 browser.runtime.onInstalled.addListener(() => {
-  if (!browser.aboutautofill) {
-    // no browser.aboutautofill almost certainly means Firefox didn't load our
+  if (!browser.experiments.autofill) {
+    // no browser.experiments.autofill almost certainly means Firefox didn't load our
     // "experimental api", so make noise.
     let msg = "\n\n***** NOTE: about:autofill is going to fail to load ****\n" +
               "If you are running this extension locally, it looks alot like you" +
@@ -9,26 +9,7 @@ browser.runtime.onInstalled.addListener(() => {
               " before things will work for you. Note that this preference can" +
               " only be changed in Nightly\n\n";
     console.error(msg);
-    dump(msg);
   }
-
-  browser.contextMenus.create(
-    {
-      id: "inspect-autofill",
-      title: "Inspect Autofill",
-      contexts: ["editable"],
-    },
-  );
-
-  browser.contextMenus.onClicked.addListener(async (info, tab) => {
-    switch (info.menuItemId) {
-      case "inspect-autofill":
-        browser.aboutautofill.test();
-        break;
-      default:
-        break;
-    }
-  });
 });
 
 // onStartup is called at browser startup if the addon is already installed.
@@ -157,7 +138,7 @@ async function freezePage(tabId) {
         tabId,
         frameIds: [frame.frameId],
       },
-      files: ["./webext/content-script.js"],
+      files: ["/content/content-script.js"],
     });
     let html = await promise;
 
@@ -206,7 +187,7 @@ function generateTest(template, inspectResult, host) {
 }
 
 async function screenshotPage(tabId, x, y, width, height) {
-  const dataUrl = await browser.aboutautofill.test(
+  const dataUrl = await browser.experiments.autofill.test(
     tabId,
     x,
     y,
@@ -280,7 +261,7 @@ async function handleMessage(request, sender, sendResponse) {
     }
     case "inspect": {
       await refresh(request);
-      const result = await browser.aboutautofill.inspect(request.tabId);
+      const result = await browser.experiments.autofill.inspect(request.tabId);
       browser.runtime.sendMessage({
         msg: 'inspect_complete',
         tabId: request.tabId,
@@ -304,7 +285,7 @@ async function handleMessage(request, sender, sendResponse) {
       const tab = await browser.tabs.get(request.tabId);
       const urlObj = new URL(tab.url);
 
-      const url = browser.runtime.getURL("./data/libs/jszip.js");
+      const url = browser.runtime.getURL("/libs/jszip.js");
       import(url).then(async module => {
         const zip = JSZip();
         const pages = await freezePage(request.tabId);
@@ -321,7 +302,7 @@ async function handleMessage(request, sender, sendResponse) {
       const urlObj = new URL(tab.url);
       const host = urlObj.hostname;
 
-      const url = browser.runtime.getURL("./data/libs/jszip.js");
+      const url = browser.runtime.getURL("/libs/jszip.js");
       import(url).then(async module => {
         const dir = `test-${host}`;
         const zip = JSZip();
@@ -374,7 +355,7 @@ async function handleMessage(request, sender, sendResponse) {
       break;
     }
     case "set-test-records": {
-      await browser.aboutautofill.setTestRecords(request.tabId, request.records);
+      await browser.experiments.autofill.setTestRecords(request.tabId, request.records);
       break;
     }
     case "change-field-attribute": {

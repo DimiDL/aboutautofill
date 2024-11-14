@@ -1,6 +1,6 @@
 [
   {
-    "namespace": "aboutautofill",
+    "namespace": "experiments.autofill",
     "functions": [
       {
         "name": "test",

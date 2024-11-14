@@ -1,8 +1,8 @@
 browser.devtools.panels
   .create(
     "Autofill", // title
-    "./icons/icon.svg", // icon
-    "./devtools-panel.html", // content
+    "icons/icon.svg", // icon
+    "devtools-panel.html", // content
   )
   .then((newPanel) => {
     newPanel.onShown.addListener(panelShown);

@@ -2,10 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-@import url("./common.css");
-@import url("./toolbars.css");
-@import url("./tooltips.css");
-@import url("./variables.css");
+@import url("/content/style/common.css");
+@import url("/content/style/toolbars.css");
+@import url("/content/style/tooltips.css");
+@import url("/content/style/variables.css");
 
 
 :root {
@@ -195,15 +195,15 @@ body,
 }
 
 .field-list-item > .field-form-icon {
-  background-image: url(./icons/formfill-anchor.svg);
+  background-image: url(/content/icons/formfill-anchor.svg);
 }
 
 .field-list-item > .field-address-icon {
-  background-image: url(./icons/icon-capture-address-fields.svg);
+  background-image: url(/content/icons/icon-capture-address-fields.svg);
 }
 
 .field-list-item > .field-credit-card-icon {
-  background-image: url(./icons/icon-credit-card-generic.svg);
+  background-image: url(/content/icons/icon-credit-card-generic.svg);
 }
 
 .field-list-item .field-list-column {
@@ -217,33 +217,33 @@ body,
 
 /* autofill inspector toolbar */
 .devtools-button.autofill-inspect-button::before {
-  background-image: url("./icons/tool-inspector.svg");
+  background-image: url("/content/icons/tool-inspector.svg");
 }
 
 .devtools-button.autofill-screenshot-button::before {
-  background-image: url("./icons/screenshot.svg");
+  background-image: url("/content/icons/screenshot.svg");
   background-size: 16px 16px;
   background-repeat: no-repeat;
 }
 
 .devtools-button.autofill-export-button::before {
-  background-image: url("./icons/command-screenshot.svg");
+  background-image: url("/content/icons/command-screenshot.svg");
 }
 
 .devtools-button.autofill-download-button::before {
-  background-image: url("./icons/downloads.svg");
+  background-image: url("/content/icons/downloads.svg");
 }
 
 .devtools-button.autofill-report-button::before {
-  background-image: url("./icons/icon-reportissue.svg");
+  background-image: url("/content/icons/icon-reportissue.svg");
 }
 
 .devtools-button.autofill-edit-field-button::before {
-  background-image: url("./icons/edit-outline.svg");
+  background-image: url("/content/icons/edit-outline.svg");
 }
 
 .devtools-button.autofill-generate-test-button::before {
-  background-image: url("./icons/policies-active.svg");
+  background-image: url("/content/icons/policies-active.svg");
 }
 
 /* From netmonitor/src/assets/styles/Toolbar.css */

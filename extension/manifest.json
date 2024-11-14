@@ -1,7 +1,7 @@
 {
-  "description": "Show information about Autofill.",
+  "description": "A set of tools for interacting with the Firefox Autofill Module",
   "manifest_version": 3,
-  "name": "About Autofill",
+  "name": "autofill-devtools",
   "version": "1.0",
   "browser_specific_settings": {
     "gecko": {
@@ -28,9 +28,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "data/libs/freeze-dry.es.js",
-        "data/libs/jszip.js",
-        "data/libs/jszip.min.js",
+        "libs/freeze-dry.es.js",
+        "libs/jszip.js",
         "data/test-addresses.json",
         "data/test-credit-cards.json",
         "data/gecko-autofill-test-template.js"
@@ -39,25 +38,25 @@
     }
   ],
 
-  "devtools_page": "data/devtools-opener.html",
+  "devtools_page": "content/devtools-opener.html",
 
   "icons": {
-      "48": "data/icons/icon.svg",
-      "96": "data/icons/icon.svg"
+      "48": "content/icons/icon.svg",
+      "96": "content/icons/icon.svg"
   },
 
   "background": {
-    "scripts": [ "webext/background.js" ],
+    "scripts": [ "background.js" ],
     "type": "module"
   },
 
   "experiment_apis": {
-    "aboutautofill": {
-      "schema": "webext/schema.json",
+    "autofill": {
+      "schema": "experiments/schema.json",
       "parent": {
         "scopes": ["addon_parent"],
-        "paths": [["aboutautofill"]],
-        "script": "webext/implementation.js"
+        "paths": [["experiments"]],
+        "script": "experiments/api.js"
       }
     }
   }

@@ -1,6 +1,6 @@
 
 console.log("load content script!");
-const url = browser.runtime.getURL("./data/libs/freeze-dry.es.js");
+const url = browser.runtime.getURL("libs/freeze-dry.es.js");
 import(url).then(async module => {
   if (window.top != window.self) {
     console.log("freeze in iframe!" + window.location.href);
