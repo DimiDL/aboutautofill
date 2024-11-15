@@ -3,79 +3,55 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 //import freezeDry from './libs/freeze-dry.es.js'
 
-let gRowToFieldDetailMap = new Map();
-let gInspectedFieldDetails;
+const CREDIT_CARD_TYPES = [
+  "cc-name",
+  "cc-given-name",
+  "cc-additional-name",
+  "cc-family-name",
+  "cc-number",
+  "cc-exp-month",
+  "cc-exp-year",
+  "cc-exp",
+  "cc-type",
+  "cc-csc",
+];
 
-function getAllCreditCardFieldType() {
-  return [
-    "cc-name",
-    "cc-given-name",
-    "cc-additional-name",
-    "cc-family-name",
-    "cc-number",
-    "cc-exp-month",
-    "cc-exp-year",
-    "cc-exp",
-    "cc-type",
-    "cc-csc",
-  ];
-}
+const ADDRESS_TYPES = [
+  "name",
+  "given-name",
+  "additional-name",
+  "family-name",
+  "organization",
+  "email",
+  "street-address",
+  "address-line1",
+  "address-line2",
+  "address-line3",
+  "address-level1",
+  "address-level2",
+  "address-streetname",
+  "address-housenumber",
+  "postal-code",
+  "country",
+  "country-name",
+  "tel",
+  "tel-country-code",
+  "tel-national",
+  "tel-area-code",
+  "tel-local",
+  "tel-local-prefix",
+  "tel-local-suffix",
+  "tel-extension",
+];
 
-function getAllAddressFieldType() {
- return [
-    "name",
-    "given-name",
-    "additional-name",
-    "family-name",
-    "organization",
-    "email",
-    "street-address",
-    "address-line1",
-    "address-line2",
-    "address-line3",
-    "address-level1",
-    "address-level2",
-    "address-streetname",
-    "address-housenumber",
-    "postal-code",
-    "country",
-    "country-name",
-    "tel",
-    "tel-country-code",
-    "tel-national",
-    "tel-area-code",
-    "tel-local",
-    "tel-local-prefix",
-    "tel-local-suffix",
-    "tel-extension",
- ];
-}
-
-function fieldDetailsToTestExpectedResult(fieldDetails) {
-  const sections = [];
-  let rootIndex;
-  let sectionIndex;
-  for (const fieldDetail of fieldDetails) {
-    if (fieldDetail.rootIndex != rootIndex ||
-        fieldDetail.sectionIndex != sectionIndex) {
-      rootIndex = fieldDetail.rootIndex;
-      sectionIndex = fieldDetail.sectionIndex;
-
-      expectedSection = {
-        fields: [],
-      };
-      sections.push(expectedSection);
+// Utils
+function findNextIndex(array, currentIndex, condition) {
+  for (let i = currentIndex + 1; i < array.length; i++) {
+    if (condition(array[i])) {
+        return i;
     }
-    let expectedField = {
-      fieldName: fieldDetail.fieldName,
-      reason: fieldDetail.reason,
-    };
-    if (fieldDetail.part) {
-      expectedField.part = fieldDetail.part;
-    }
-    expectedSection.fields.push(expectedField);
   }
-  return sections;
+  return array.length;
 }
 
 async function loadData(filename) {
@@ -100,155 +76,115 @@ async function loadData(filename) {
   }
 }
 
-async function screenshotInspectResult() {
-  // Use html2Canvas to screenshot
-  const element = document.querySelector(".autofill-panel");
-  const width = element.scrollWidth;
-  const height =
-    document.querySelector(".devtools-toolbar").scrollHeight +
-    document.querySelector(".field-list-scroll").scrollHeight
-  console.log("scroll hight is " + element.scrollHeight);
+class AutofillInspector {
+  #inspectedFieldDetails = null;
 
-  const canvas = await html2canvas(element, {
-    allowTaint: true,
-    useCORS: true,
-    x: 0,
-    y: 0,
-    width,
-    height: height,
-    windowHeight: height,
-  });
-  return canvas.toDataURL("image/png");
-}
+  #rowToFieldDetail = new Map();
 
-let gTestAddresses;
-async function getTestAddresses() {
-  if (!gTestAddresses) {
-    gTestAddresses = await loadData("data/test-addresses.json");
+  #testAddresses = null;
+
+  #testCreditCards = null;
+
+  constructor() {
+    document.addEventListener("DOMContentLoaded", () => this.init(), { once: true });
+    // Handle requests from background script.
+    browser.runtime.onMessage.addListener(request => this.onMessage(request));
   }
-  return gTestAddresses;
-}
 
-let gTestCreditCards;
-async function getTestCreditCards() {
-  if (!gTestCreditCards) {
-    gTestCreditCards = await loadData("data/test-credit-cards.json");
-  }
-  return gTestCreditCards;
-}
-
-async function getTestTemplate() {
-  return await loadData("data/gecko-autofill-test-template.js");
-}
-
-function inspectIdToElementSelector(id) {
-  return `[data-moz-autofill-inspect-id="${id}"]`;
-}
-
-function initAutofillInspectorPanel() {
-  browser.runtime.sendMessage({
-    msg: "init",
-    tabId: browser.devtools.inspectedWindow.tabId,
-  });
-
-  const button = document.getElementById("autofill-inspect-start-button");
-  button.addEventListener("click", () => {
-    gInspectedFieldDetails = null;
+  sendMessage(msg, request) {
     browser.runtime.sendMessage({
-      msg: "inspect",
+      msg,
       tabId: browser.devtools.inspectedWindow.tabId,
+      ...request,
     });
-  });
+  }
 
-  const inspectElementButton = document.getElementById("autofill-inspect-element-button");
-  inspectElementButton.addEventListener("click", () => {
+  onMessage(request) {
+    if (request.tabId != browser.devtools.inspectedWindow.tabId) {
+      return;
+    }
+
+    switch (request.msg) {
+      case 'inspect-complete': {
+        this.updateFieldsInfo(request.data);
+        break;
+      }
+      case 'show': {
+        document.querySelectorAll("tr.selected").forEach(row =>
+          this.addHighlightOverlay("select", this.#rowToFieldDetail.get(row))
+        );
+      }
+    }
+  }
+
+  onInspect() {
+    this.#inspectedFieldDetails = null;
+    this.sendMessage("inspect");
+  }
+
+  onInspectElement() {
     const row = document.querySelector("tr.selected");
-    const fieldDetail = gRowToFieldDetailMap.get(row);
+    const fieldDetail = this.#rowToFieldDetail.get(row);
     const js = `
       (function() {
-        const selector = '${inspectIdToElementSelector(fieldDetail.inspectId)}'
+        const selector = '[data-moz-autofill-inspect-id="${fieldDetail.inspectId}"]'
         inspect(document.querySelector(selector));
       })();
     `;
     browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
-  });
+  }
 
-  const screenshotButton = document.getElementById("autofill-screenshot-button");
-  screenshotButton.addEventListener("click", async () => {
-    browser.devtools.inspectedWindow.eval(
-      `({
-          width: document.documentElement.scrollWidth,
-          height: document.documentElement.scrollHeight,
-      })`, (result) => {
-        browser.runtime.sendMessage({
-          msg: "screenshot",
-          tabId: browser.devtools.inspectedWindow.tabId,
-          x: 0,
-          y: 0,
-          width: result.width,
-          height: result.height,
-        });
-      }
+  onScreenshot() {
+    browser.devtools.inspectedWindow.eval(`
+      ({
+        width: document.documentElement.scrollWidth,
+        height: document.documentElement.scrollHeight,
+      })`, ({ width, height }) =>
+      this.sendMessage("screenshot", { x: 0, y: 0, width, height })
     );
-  });
+  }
 
-  const downloadButton = document.getElementById("autofill-download-button");
-  downloadButton.addEventListener("click", async () => {
-    browser.runtime.sendMessage({
-      msg: "freeze",
-      tabId: browser.devtools.inspectedWindow.tabId,
-    });
-  });
+  onDownloadPage() {
+    this.sendMessage("freeze");
+  }
 
-  // TODO: Make the bugzilla to save more fields
-  // -- attach screenshot
-  // -- attach testcase
-  // -- attach claasified result
-  // -- attach downloaded file
-  const reportButton = document.getElementById("autofill-report-button");
-  reportButton.addEventListener("click", async () => {
-    browser.runtime.sendMessage({
-      msg: "report",
-      tabId: browser.devtools.inspectedWindow.tabId,
-    });
-  });
+  onReportIssue() {
+    this.sendMessage("report");
+  }
 
-  let editing = false;
-  const editFieldButton = document.getElementById("autofill-edit-field-button");
-  editFieldButton.addEventListener("click", async (event) => {
+  onEditFields(event) {
     let hasChanged = false;
-    const isEditing = editFieldButton.classList.contains("editing");
-    const editables = document.querySelectorAll("td#col-fieldName");
-
-    editables.forEach(cell => {
+    const isEditing = event.target.classList.contains("editing");
+    document.querySelectorAll("td#col-fieldName").forEach(cell => {
       if (isEditing) {
         const select = cell.querySelector("select");
         if (select.classList.contains("changed")) {
           hasChanged = true;
           const tr = select.closest("tr");
-          const fieldDetail = gRowToFieldDetailMap.get(tr);
+          const fieldDetail = this.#rowToFieldDetail.get(tr);
           // TODO: We should not change the underlying element.
           // It will cause testcase not matches...
-          browser.runtime.sendMessage({
-            msg: "change-field-attribute",
-            tabId: browser.devtools.inspectedWindow.tabId,
-            frameId: fieldDetail.frameId,
-            inspectId: fieldDetail.inspectId,
-            attribute: "autocomplete",
-            value: select.value,
-          });
+          this.sendMessage(
+            "change-field-attribute",
+            {
+              frameId: fieldDetail.frameId,
+              inspectId: fieldDetail.inspectId,
+              attribute: "autocomplete",
+              value: select.value,
+            }
+          );
         }
         cell.textContent = select.value;
         select.remove();
       } else {
         const select = document.createElement("select");
 
-        const options = [...getAllAddressFieldType(), ...getAllCreditCardFieldType()];
-        options.forEach(optionText => {
+        [...ADDRESS_TYPES, ...CREDIT_CARD_TYPES].forEach(fieldName => {
           const option = document.createElement("option");
-          option.value = optionText;
-          option.textContent = optionText;
-          if (optionText === cell.textContent) {
+          option.value = fieldName;
+          option.textContent = fieldName;
+          if (fieldName === cell.textContent) {
+            // Move the matched <select> to the first one
             select.insertBefore(option, select.firstChild);
             option.selected = true;
           } else {
@@ -270,336 +206,372 @@ function initAutofillInspectorPanel() {
         cell.appendChild(select);
       }
     });
-    if (isEditing && hasChanged) {
-      // Send a message to run inspect again
-      gInspectedFieldDetails = null;
-      browser.runtime.sendMessage({
-        msg: "inspect",
-        tabId: browser.devtools.inspectedWindow.tabId,
-      });
+    if (hasChanged) {
+      this.onInspect();
     }
-    editFieldButton.classList.toggle("editing");
-  });
+    event.target.classList.toggle("editing");
+  }
 
-  const generateTestButton = document.getElementById("autofill-generate-test-button");
-  generateTestButton.addEventListener("click", async () => {
-    if (!gInspectedFieldDetails) {
-      // TODO: Trigger inspect
+  async onGenerateTest() {
+    if (!this.#inspectedFieldDetails) {
+      //this.onInspect();
     }
-    const template = await getTestTemplate();
-    const inspectResult = fieldDetailsToTestExpectedResult(gInspectedFieldDetails);
-    const ret = await browser.devtools.inspectedWindow.eval(
+    const template = await this.getTestTemplate();
+    const result = this.fieldDetailsToTestExpectedResult(this.#inspectedFieldDetails);
+    const { width, height } = await browser.devtools.inspectedWindow.eval(
       `({
           width: document.documentElement.scrollWidth,
           height: document.documentElement.scrollHeight,
       })`
     );
-    browser.runtime.sendMessage({
-      msg: "generate-testcase",
-      tabId: browser.devtools.inspectedWindow.tabId,
-      template,
-      result: inspectResult,
-      x: 0,
-      y: 0,
-      width: ret[0].width,
-      height: ret[0].height,
-    });
-  });
 
-  const addAddressButton = document.getElementById("autofill-add-address-button");
-  const addCreditCardButton = document.getElementById("autofill-add-credit-card-button");
+    this.sendMessage(
+      "generate-testcase",
+      { template, result, x: 0, y: 0, width, height }
+    );
+  }
 
-  async function onAddRecord() {
+  async onAddOrRemoveTestRecord() {
     const records = [];
-    if (addAddressButton.checked) {
-      const addresses = await getTestAddresses();
+    if (document.getElementById("autofill-add-address-button").checked) {
+      const addresses = await this.getTestAddresses();
       records.push(...addresses);
     };
 
-    if (addCreditCardButton.checked) {
-      const creditcards = await getTestCreditCards();
+    if (document.getElementById("autofill-add-credit-card-button").checked) {
+      const creditcards = await this.getTestCreditCards();
       records.push(...creditcards);
     }
 
-    browser.runtime.sendMessage({
-      msg: "set-test-records",
-      tabId: browser.devtools.inspectedWindow.tabId,
-      records,
-    });
+    this.sendMessage("set-test-records", { records });
   }
-
-  addAddressButton.addEventListener("change", (event) => onAddRecord());
-  addCreditCardButton.addEventListener("change", (event) => onAddRecord());
 
   // TODO: Maybe we should just export the HTML?
-  const exportButton = document.getElementById("autofill-export-button");
-  exportButton.addEventListener("click", async () => {
+  async onExportInspectResult() {
     // Use html2Canvas to screenshot
-    const dataUrl = await screenshotInspectResult();
-    browser.runtime.sendMessage({
-      msg: "download",
-      tabId: browser.devtools.inspectedWindow.tabId,
-      filename: "screenshot.png",
-      dataUrl,
+    const element = document.querySelector(".autofill-panel");
+    const width = element.scrollWidth;
+    const height =
+      document.querySelector(".devtools-toolbar").scrollHeight +
+      document.querySelector(".field-list-scroll").scrollHeight
+
+    const canvas = await html2canvas(element, {
+      allowTaint: true,
+      useCORS: true,
+      x: 0,
+      y: 0,
+      width,
+      height: height,
+      windowHeight: height,
     });
-  });
 
-  const headers = [
-    {id: "col-root", text: "Root"},
-    {id: "col-section", text: "Section"},
-    {id: "col-frame", text: "Frame"},
-    {id: "col-identifier", text: "Id/Name"},
-    {id: "col-fieldName", text: "FieldName"},
-    {id: "col-reason", text: "Reason"},
-    {id: "col-isVisible", text: "Visible"},
-    {id: "col-part", text: "Part"},
-    {id: "col-confidence", text: "Confidence"},
-  ];
-
-  const head_tr = document.getElementById("form-analysis-head-row");
-  headers.forEach(header => {
-    const th = document.createElement("th");
-    th.setAttribute("id", header.id);
-    th.setAttribute("class", "field-list-column");
-    const div = document.createElement("div");
-    div.innerHTML = header.text;
-    th.appendChild(div);
-    head_tr.appendChild(th);
-  });
-}
-
-function fieldDetailToColumnValue(columnId, fieldDetail) {
-  const regex = /^col-(.*)$/;
-  const fieldName = columnId.match(regex)[1];
-  return fieldDetail[fieldName];
-}
-
-function scrollIntoView(fieldDetail) {
-  browser.runtime.sendMessage({
-    msg: "scroll",
-    tabId: browser.devtools.inspectedWindow.tabId,
-    inspectId: fieldDetail.inspectId,
-    frameId: fieldDetail.frameId,
-  });
-}
-
-function addHighlightOverlay(type, fieldDetail) {
-  browser.runtime.sendMessage({
-    msg: "highlight",
-    tabId: browser.devtools.inspectedWindow.tabId,
-    type,
-    inspectId: fieldDetail.inspectId,
-    frameId: fieldDetail.frameId,
-  });
-}
-
-// Type should be either `select` or `hover`
-function removeHighlightOverlay(type, fieldDetail) {
-  browser.runtime.sendMessage({
-    msg: "highlight-remove",
-    tabId: browser.devtools.inspectedWindow.tabId,
-    type,
-    inspectId: fieldDetail.inspectId,
-    frameId: fieldDetail.frameId,
-  });
-}
-
-function getSpannedRows(td) {
-  const rowSpan = td.rowSpan;
-  const currentRow = td.parentElement;
-  const table = currentRow.parentElement;
-
-  const rowIndex = Array.from(table.children).indexOf(currentRow);
-
-  const spannedRows = [];
-  for (let i = 0; i < rowSpan; i++) {
-    const nextRow = table.children[rowIndex + i];
-    if (nextRow) {
-        spannedRows.push(nextRow);
-    }
-  }
-  return spannedRows;
-}
-
-function setupRowMouseOver(tr, fieldDetail) {
-  tr.addEventListener("mouseover", (event) => {
-    event.preventDefault();
-    if (event.target.hasAttribute("rowspan")) {
-      tr.classList.add('className', 'autofill-hide-highlight');
-      return;
-    }
-
-    addHighlightOverlay("hover", fieldDetail);
-    scrollIntoView(fieldDetail);
-  });
-
-  tr.addEventListener("mouseout", (event) => {
-    event.preventDefault();
-    if (event.target.hasAttribute("rowspan")) {
-      tr.classList.remove('className', 'autofill-hide-highlight');
-      return;
-    }
-
-    removeHighlightOverlay("hover", fieldDetail);
-  });
-}
-
-// Utils
-function findNextIndex(array, currentIndex, condition) {
-  for (let i = currentIndex + 1; i < array.length; i++) {
-    if (condition(array[i])) {
-        return i;
-    }
-  }
-  return array.length;
-}
-
-function updateFieldsInfo(fieldDetails) {
-  // Clone the field detail array
-  gInspectedFieldDetails = Array.from(fieldDetails, item => ({ ...item }));
-
-  const tbody = document.getElementById("form-analysis-table-body");
-  while (tbody.firstChild) {
-    tbody.firstChild.remove();
+    const filename = "screenshot.png";
+    const dataUrl = canvas.toDataURL("image/png");
+    this.sendMessage("download", { filename, dataUrl });
   }
 
-  const cols = document.getElementById("form-analysis-head-row").childNodes;
-  let nthSection = -1;
+  #buttonClickHandlers = [
+    ["autofill-inspect-start-button", () => this.onInspect()],
+    ["autofill-inspect-element-button", () => this.onInspectElement()],
+    ["autofill-screenshot-button", () => this.onScreenshot()],
+    ["autofill-download-button", () => this.onDownloadPage()],
+    ["autofill-report-button", () => this.onReportIssue()],
+    ["autofill-edit-field-button", (event) => this.onEditFields(event)],
+    ["autofill-generate-test-button", () => this.onGenerateTest()],
+    ["autofill-export-button", () => this.onExportInspectResult()],
+  ]
 
-  let formNextIndex;
-  let sectionNextIndex;
-  let frameNextIndex;
+  #checkboxChangeHandlers = [
+    ["autofill-add-address-button", () => this.onAddOrRemoveTestRecord()],
+    ["autofill-add-credit-card-button", () => this.onAddOrRemoveTestRecord()],
+  ]
 
-  for (let index = 0; index < gInspectedFieldDetails?.length; index++) {
-    const fieldDetail = fieldDetails[index];
+  init() {
+    // TODO: remove this???
+    this.sendMessage("init");
 
-    const tr = document.createElement("tr");
-    tr.classList.add("field-list-item");
+    for (const [id, handler] of this.#buttonClickHandlers) {
+      const button = document.getElementById(id);
+      button.addEventListener("click", handler);
+    }
 
-    // Setup the mouse over handler for this row
-    gRowToFieldDetailMap.set(tr, fieldDetail);
-    setupRowMouseOver(tr, fieldDetail);
+    for (const [id, handler] of this.#checkboxChangeHandlers) {
+      const checkbox = document.getElementById(id);
+      checkbox.addEventListener("change", event => handler(event));
+    }
 
-    for (const column of cols) {
-      if (!column.id) {
-        continue;
+    const headers = [
+      {id: "col-root", text: "Root"},
+      {id: "col-section", text: "Section"},
+      {id: "col-frame", text: "Frame"},
+      {id: "col-identifier", text: "Id/Name"},
+      {id: "col-fieldName", text: "FieldName"},
+      {id: "col-reason", text: "Reason"},
+      {id: "col-isVisible", text: "Visible"},
+      {id: "col-part", text: "Part"},
+      {id: "col-confidence", text: "Confidence"},
+    ];
+
+    const head_tr = document.getElementById("form-analysis-head-row");
+    headers.forEach(header => {
+      const th = document.createElement("th");
+      th.setAttribute("id", header.id);
+      th.setAttribute("class", "field-list-column");
+      const div = document.createElement("div");
+      div.innerHTML = header.text;
+      th.appendChild(div);
+      head_tr.appendChild(th);
+    });
+  }
+
+  fieldDetailToColumnValue(columnId, fieldDetail) {
+    const regex = /^col-(.*)$/;
+    const fieldName = columnId.match(regex)[1];
+    return fieldDetail[fieldName];
+  }
+
+  scrollIntoView(fieldDetail) {
+    this.sendMessage(
+      "scroll", {
+        inspectId: fieldDetail.inspectId,
+        frameId: fieldDetail.frameId,
       }
-      const td = document.createElement("td");
-      td.setAttribute("class", "field-list-column")
-      td.id = column.id;
-
-      switch (column.id) {
-        case "col-root": {
-          if (formNextIndex && index < formNextIndex) {
-            continue;
-          }
-          formNextIndex = findNextIndex(fieldDetails, index, (compare) =>
-            fieldDetail.rootIndex != compare.rootIndex
-          );
-          td.setAttribute("rowspan", formNextIndex - index);
-
-          td.classList.add("field-icon");
-          td.classList.add("field-form-icon");
-          break;
-        }
-        case "col-section": {
-          if (sectionNextIndex && index < sectionNextIndex) {
-            continue;
-          }
-          sectionNextIndex = findNextIndex(fieldDetails, index, (compare) =>
-            fieldDetail.sectionIndex != compare.sectionIndex
-          );
-          if (sectionNextIndex > formNextIndex) {
-            sectionNextIndex = formNextIndex;
-          }
-          td.setAttribute("rowspan", sectionNextIndex - index);
-
-          nthSection++;
-          td.classList.add("field-icon");
-          if (fieldDetail.fieldName.startsWith("cc-")) {
-            td.classList.add("field-credit-card-icon");
-          } else {
-            td.classList.add("field-address-icon");
-          }
-          break;
-        }
-        case "col-frame": {
-          if (frameNextIndex && index < frameNextIndex) {
-            continue;
-          }
-          frameNextIndex = findNextIndex(fieldDetails, index, (compare) =>
-            fieldDetail.browsingContextId != compare.browsingContextId
-          );
-          if (frameNextIndex > sectionNextIndex) {
-            frameNextIndex = sectionNextIndex;
-          }
-          td.setAttribute("rowspan", frameNextIndex - index);
-
-          td.appendChild(document.createTextNode(fieldDetail.frame));
-          break;
-        }
-        default: {
-          if (!fieldDetail.isVisible) {
-            td.classList.add("autofill-invisible-field");
-          }
-
-          const text = this.fieldDetailToColumnValue(column.id, fieldDetail);
-          td.appendChild(document.createTextNode(text));
-          break;
-        }
-      }
-      tr.appendChild(td);
-    }
-
-    if (nthSection % 2) {
-      tr.classList.add("autofill-section-even");
-    }
-    tbody.appendChild(tr);
+    );
   }
 
-  document.querySelectorAll(".field-list-item").forEach(tr => {
-    tr.addEventListener("click", function() {
-      //if (["col-root", "col-section", "col-frame"].includes(event.target.id)) {
-      let rows;
+  addHighlightOverlay(type, fieldDetail) {
+    this.sendMessage(
+      "highlight",
+      {
+        type,
+        inspectId: fieldDetail.inspectId,
+        frameId: fieldDetail.frameId,
+      }
+    );
+  }
+
+  // Type should be either `select` or `hover`
+  removeHighlightOverlay(type, fieldDetail) {
+    this.sendMessage(
+      "highlight-remove",
+      {
+        type,
+        inspectId: fieldDetail.inspectId,
+        frameId: fieldDetail.frameId,
+      }
+    );
+  }
+
+  getSpannedRows(td) {
+    const rowSpan = td.rowSpan;
+    const currentRow = td.parentElement;
+    const table = currentRow.parentElement;
+
+    const rowIndex = Array.from(table.children).indexOf(currentRow);
+
+    const spannedRows = [];
+    for (let i = 0; i < rowSpan; i++) {
+      const nextRow = table.children[rowIndex + i];
+      if (nextRow) {
+          spannedRows.push(nextRow);
+      }
+    }
+    return spannedRows;
+  }
+
+  setupRowMouseOver(tr, fieldDetail) {
+    tr.addEventListener("mouseover", (event) => {
+      event.preventDefault();
       if (event.target.hasAttribute("rowspan")) {
-        rows = getSpannedRows(event.target);
-      } else {
-        rows = [tr];
+        tr.classList.add('className', 'autofill-hide-highlight');
+        return;
       }
 
-      for (const row of rows) {
-        if (row.classList.contains("selected")) {
-          removeHighlightOverlay("select", gRowToFieldDetailMap.get(row));
-        } else {
-          addHighlightOverlay("select", gRowToFieldDetailMap.get(row))
-        }
-        row.classList.toggle("selected");
-      }
+      this.addHighlightOverlay("hover", fieldDetail);
+      this.scrollIntoView(fieldDetail);
     });
-  });
-}
 
-document.addEventListener("DOMContentLoaded", initAutofillInspectorPanel, { once: true });
+    tr.addEventListener("mouseout", (event) => {
+      event.preventDefault();
+      if (event.target.hasAttribute("rowspan")) {
+        tr.classList.remove('className', 'autofill-hide-highlight');
+        return;
+      }
 
-// Handle requests from background script.
-browser.runtime.onMessage.addListener((request) => {
-  if (request.tabId != browser.devtools.inspectedWindow.tabId) {
-    return;
+      this.removeHighlightOverlay("hover", fieldDetail);
+    });
   }
 
-  switch (request.msg) {
-    case 'inspect_complete': {
-      updateFieldsInfo(request.data);
-      break;
+  updateFieldsInfo(fieldDetails) {
+    // Clone the field detail array
+    this.#inspectedFieldDetails = Array.from(fieldDetails, item => ({ ...item }));
+
+    const tbody = document.getElementById("form-analysis-table-body");
+    while (tbody.firstChild) {
+      tbody.firstChild.remove();
     }
-    case 'show': {
-      const rows = document.querySelectorAll("tr.selected");
-      rows.forEach(row => {
-        const fieldDetail = gRowToFieldDetailMap.get(row);
-        if (fieldDetail) {
-          addHighlightOverlay("select", fieldDetail);
+
+    const cols = document.getElementById("form-analysis-head-row").childNodes;
+    let nthSection = -1;
+
+    let formNextIndex;
+    let sectionNextIndex;
+    let frameNextIndex;
+
+    for (let index = 0; index < this.#inspectedFieldDetails?.length; index++) {
+      const fieldDetail = fieldDetails[index];
+
+      const tr = document.createElement("tr");
+      tr.classList.add("field-list-item");
+
+      // Setup the mouse over handler for this row
+      this.#rowToFieldDetail.set(tr, fieldDetail);
+      this.setupRowMouseOver(tr, fieldDetail);
+
+      for (const column of cols) {
+        if (!column.id) {
+          continue;
+        }
+        const td = document.createElement("td");
+        td.setAttribute("class", "field-list-column")
+        td.id = column.id;
+
+        switch (column.id) {
+          case "col-root": {
+            if (formNextIndex && index < formNextIndex) {
+              continue;
+            }
+            formNextIndex = findNextIndex(fieldDetails, index, (compare) =>
+              fieldDetail.formIndex != compare.formIndex
+            );
+            td.setAttribute("rowspan", formNextIndex - index);
+
+            td.classList.add("field-icon");
+            td.classList.add("field-form-icon");
+            break;
+          }
+          case "col-section": {
+            if (sectionNextIndex && index < sectionNextIndex) {
+              continue;
+            }
+            sectionNextIndex = findNextIndex(fieldDetails, index, (compare) =>
+              fieldDetail.sectionIndex != compare.sectionIndex
+            );
+            if (sectionNextIndex > formNextIndex) {
+              sectionNextIndex = formNextIndex;
+            }
+            td.setAttribute("rowspan", sectionNextIndex - index);
+
+            nthSection++;
+            td.classList.add("field-icon");
+            if (fieldDetail.fieldName.startsWith("cc-")) {
+              td.classList.add("field-credit-card-icon");
+            } else {
+              td.classList.add("field-address-icon");
+            }
+            break;
+          }
+          case "col-frame": {
+            if (frameNextIndex && index < frameNextIndex) {
+              continue;
+            }
+            frameNextIndex = findNextIndex(fieldDetails, index, (compare) =>
+              fieldDetail.browsingContextId != compare.browsingContextId
+            );
+            if (frameNextIndex > sectionNextIndex) {
+              frameNextIndex = sectionNextIndex;
+            }
+            td.setAttribute("rowspan", frameNextIndex - index);
+
+            td.appendChild(document.createTextNode(fieldDetail.frame));
+            break;
+          }
+          default: {
+            if (!fieldDetail.isVisible) {
+              td.classList.add("autofill-invisible-field");
+            }
+
+            const text = this.fieldDetailToColumnValue(column.id, fieldDetail);
+            td.appendChild(document.createTextNode(text));
+            break;
+          }
+        }
+        tr.appendChild(td);
+      }
+
+      if (nthSection % 2) {
+        tr.classList.add("autofill-section-even");
+      }
+      tbody.appendChild(tr);
+    }
+
+    document.querySelectorAll(".field-list-item").forEach(tr => {
+      tr.addEventListener("click", () => {
+        //if (["col-root", "col-section", "col-frame"].includes(event.target.id)) {
+        let rows;
+        if (event.target.hasAttribute("rowspan")) {
+          rows = this.getSpannedRows(event.target);
+        } else {
+          rows = [tr];
+        }
+
+        for (const row of rows) {
+          if (row.classList.contains("selected")) {
+            this.removeHighlightOverlay("select", this.#rowToFieldDetail.get(row));
+          } else {
+            this.addHighlightOverlay("select", this.#rowToFieldDetail.get(row))
+          }
+          row.classList.toggle("selected");
         }
       });
-    }
+    });
   }
-});
+
+  async getTestAddresses() {
+    if (!this.#testAddresses) {
+      this.#testAddresses = await loadData("data/test-addresses.json");
+    }
+    return this.#testAddresses;
+  }
+
+  async getTestCreditCards() {
+    if (!this.#testCreditCards) {
+      this.#testCreditCards = await loadData("data/test-credit-cards.json");
+    }
+    return this.#testCreditCards;
+  }
+
+  async getTestTemplate() {
+    return await loadData("data/gecko-autofill-test-template.js");
+  }
+
+  fieldDetailsToTestExpectedResult(fieldDetails) {
+    let expectedSection;
+    const sections = [];
+    let formIndex;
+    let sectionIndex;
+    for (const fieldDetail of fieldDetails) {
+      if (fieldDetail.formIndex != formIndex ||
+          fieldDetail.sectionIndex != sectionIndex) {
+        formIndex = fieldDetail.formIndex;
+        sectionIndex = fieldDetail.sectionIndex;
+
+        expectedSection = {
+          fields: [],
+        };
+        sections.push(expectedSection);
+      }
+      let expectedField = {
+        fieldName: fieldDetail.fieldName,
+        reason: fieldDetail.reason,
+      };
+      if (fieldDetail.part) {
+        expectedField.part = fieldDetail.part;
+      }
+      expectedSection.fields.push(expectedField);
+    }
+    return sections;
+  }
+}
+
+let inspector = new AutofillInspector();

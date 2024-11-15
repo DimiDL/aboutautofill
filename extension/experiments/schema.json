@@ -3,9 +3,9 @@
     "namespace": "experiments.autofill",
     "functions": [
       {
-        "name": "test",
+        "name": "captureTab",
         "type": "function",
-        "description": "Performs necessary startup functions",
+        "description": "Screenshot the specified tab",
         "async": true,
         "parameters": [
           {

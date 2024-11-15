@@ -1,36 +1,50 @@
-// onInstalled, but not onStartup, is called when the addon is installed.
-browser.runtime.onInstalled.addListener(() => {
-  if (!browser.experiments.autofill) {
-    // no browser.experiments.autofill almost certainly means Firefox didn't load our
-    // "experimental api", so make noise.
-    let msg = "\n\n***** NOTE: about:autofill is going to fail to load ****\n" +
-              "If you are running this extension locally, it looks alot like you" +
-              " need to set the preference `extensions.experiments.enabled` to `true`" +
-              " before things will work for you. Note that this preference can" +
-              " only be changed in Nightly\n\n";
-    console.error(msg);
+const BUGZILLA_NEW_BUG_URL = "https://bugzilla.mozilla.org/enter_bug.cgi?product=Toolkit&component=Form+Autofill";
+
+/**
+ * Utility Functions
+ */
+async function getHostNameByTabId(tabId) {
+  const tab = await browser.tabs.get(tabId);
+  const urlObj = new URL(tab.url);
+  return urlObj.hostname;
+}
+
+function dataURLToBlob(url) {
+  const binary = atob(url.split(",", 2)[1]);
+  let contentType = url.split(",", 1)[0];
+  contentType = contentType.split(";", 1)[0];
+  contentType = contentType.split(":", 2)[1];
+
+  if (contentType !== "image/png" && contentType !== "image/jpeg") {
+    contentType = "image/png";
   }
-});
+  const data = Uint8Array.from(binary, char => char.charCodeAt(0));
+  const blob = new Blob([data], { type: contentType });
+  return blob;
+}
 
-// onStartup is called at browser startup if the addon is already installed.
-browser.runtime.onStartup.addListener(() => {
-});
 
-async function refresh({ tabId }) {
-  const frames = await browser.webNavigation.getAllFrames({ tabId });
-  browser.scripting.executeScript({
-    target: {
-      tabId,
-      frameIds: [...frames.map(frame => frame.frameId)],
-    },
-    func: () => {
-      const overlays = document.querySelectorAll('div.moz-autofill-overlay');
-      overlays.forEach(element => element.remove());
-    }
+function download(blob, filename, saveAs = true) {
+  const url = URL.createObjectURL(blob);
+
+  // Trigger download with a save-as dialog
+  browser.downloads.download({
+    url: url,
+    filename: filename,
+    saveAs
+  }).then(() => {
+    console.log("Download triggered successfully.");
+    URL.revokeObjectURL(url); // Clean up the Blob URL after download
+  }).catch((error) => {
+    // Dimi: Users cancel, just ignore it
+    console.error("Error triggering download:", error);
   });
 }
 
-function scrollIntoView({ tabId, inspectId, frameId }) {
+/**
+ * Inspector Panel View Related
+ */
+function scrollIntoView(tabId, inspectId, frameId) {
   browser.scripting.executeScript({
     target: {
       tabId,
@@ -98,7 +112,21 @@ async function addHighlightOverlay({ tabId, type, inspectId, frameId }) {
   });
 }
 
-async function removeHighlightOverlay({ tabId, type, inspectId, frameId }) {
+async function removeAllHighlightOverlay(tabId) {
+  const frames = await browser.webNavigation.getAllFrames({ tabId });
+  browser.scripting.executeScript({
+    target: {
+      tabId,
+      frameIds: [...frames.map(frame => frame.frameId)],
+    },
+    func: () => {
+      const overlays = document.querySelectorAll('div.moz-autofill-overlay');
+      overlays.forEach(element => element.remove());
+    }
+  });
+}
+
+async function removeHighlightOverlay(tabId, type, inspectId, frameId) {
   browser.scripting.executeScript({
     target: {
       tabId,
@@ -147,19 +175,19 @@ async function freezePage(tabId) {
       filename = `${new URL(frame.url).host}.html`;
       for (let [url, path] of urlToPath) {
         url = url.replace(/&/g, "&amp;");
-        console.log("url is " + url);
+        //console.log("url is " + url);
         const regexURL = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`<iframe\\s+[^>]*src=["']${regexURL}["']`, 'i');
-        if (html.match(regex)) {
-          console.log("ok..can find with regex");
-        } else {
-          console.log("ok..canNOT find with regex");
-        }
-        if (html.includes(url)) {
-          console.log("ok..can find with include");
-        } else {
-          console.log("ok..canNOT find with include");
-        }
+        //if (html.match(regex)) {
+          //console.log("ok..can find with regex");
+        //} else {
+          //console.log("ok..canNOT find with regex");
+        //}
+        //if (html.includes(url)) {
+          //console.log("ok..can find with include");
+        //} else {
+          //console.log("ok..canNOT find with include");
+        //}
         html = html.replace(regex, `<iframe src="${path}"`);
       }
     } else {
@@ -187,7 +215,7 @@ function generateTest(template, inspectResult, host) {
 }
 
 async function screenshotPage(tabId, x, y, width, height) {
-  const dataUrl = await browser.experiments.autofill.test(
+  const dataUrl = await browser.experiments.autofill.captureTab(
     tabId,
     x,
     y,
@@ -218,72 +246,26 @@ function changeFieldAttribute({ tabId, inspectId, frameId, attribute, value }) {
 
 }
 
-function download(blob, filename) {
-  const url = URL.createObjectURL(blob);
-
-  // Trigger download with a save-as dialog
-  browser.downloads.download({
-    url: url,
-    filename: filename,
-    saveAs: true
-  }).then(() => {
-    console.log("Download triggered successfully.");
-    URL.revokeObjectURL(url); // Clean up the Blob URL after download
-  }).catch((error) => {
-    // Dimi: Users cancel, just ignore it
-    console.error("Error triggering download:", error);
-  });
-}
-
-function dataURLToBlob(url) {
-  const binary = atob(url.split(",", 2)[1]);
-  let contentType = url.split(",", 1)[0];
-  contentType = contentType.split(";", 1)[0];
-  contentType = contentType.split(":", 2)[1];
-
-  if (contentType !== "image/png" && contentType !== "image/jpeg") {
-    contentType = "image/png";
-  }
-  const data = Uint8Array.from(binary, char => char.charCodeAt(0));
-  const blob = new Blob([data], { type: contentType });
-  return blob;
-}
-
 /**
  * When we receive the message, execute the given script in the given tab.
  */
 async function handleMessage(request, sender, sendResponse) {
   console.log("receive msg " + request.msg + "");
   switch (request.msg) {
-    case "hide": {
-      await refresh(request);
-      break;
-    }
+    // Run autofill fields inspection
     case "inspect": {
-      await refresh(request);
+      await removeAllHighlightOverlay(request.tabId);
       const result = await browser.experiments.autofill.inspect(request.tabId);
       browser.runtime.sendMessage({
-        msg: 'inspect_complete',
+        msg: 'inspect-complete',
         tabId: request.tabId,
         data: result
       }).catch(() => {});
       break;
     }
-    case "scroll": {
-      scrollIntoView(request);
-      break;
-    }
-    case "highlight": {
-      addHighlightOverlay(request);
-      break;
-    }
-    case "highlight-remove": {
-      removeHighlightOverlay(request);
-      break;
-    }
+    // Download the page mark
     case "freeze": {
-      const tab = await browser.tabs.get(request.tabId);
-      const urlObj = new URL(tab.url);
+      const host = await getHostNameByTabId(request.tabId);
 
       const url = browser.runtime.getURL("/libs/jszip.js");
       import(url).then(async module => {
@@ -293,14 +275,13 @@ async function handleMessage(request, sender, sendResponse) {
           zip.file(page.filename, page.blob);
         }
         const blob = await zip.generateAsync({ type: "blob" });
-        download(blob, `testcase-${urlObj.hostname}.zip`);
+        download(blob, `testcase-${host}.zip`);
       });
       break;
     }
+    // Generate a testcase
     case "generate-testcase": {
-      const tab = await browser.tabs.get(request.tabId);
-      const urlObj = new URL(tab.url);
-      const host = urlObj.hostname;
+      const host = await getHostNameByTabId(request.tabId);
 
       const url = browser.runtime.getURL("/libs/jszip.js");
       import(url).then(async module => {
@@ -332,10 +313,8 @@ async function handleMessage(request, sender, sendResponse) {
       });
       break;
     }
+    // Screenshot the tab
     case "screenshot": {
-      const tab = await browser.tabs.get(request.tabId);
-      const urlObj = new URL(tab.url);
-      const filename = `dom-${urlObj.hostname}.png`;
       const blob = await screenshotPage(
         request.tabId,
         request.x,
@@ -344,18 +323,24 @@ async function handleMessage(request, sender, sendResponse) {
         request.height
       );
 
-      download(blob, filename);
+      const host = await getHostNameByTabId(request.tabId);
+      download(blob, `dom-${host}.png`);
       break;
     }
+    // File a Site Compatibility Bug Report
     case "report": {
-      // Need attachmenbt, url, summary, and description
+      // TODO: Need attachmenbt, url, summary, and description
       browser.tabs.create({
-        url: "https://bugzilla.mozilla.org/enter_bug.cgi?product=Toolkit&component=Form+Autofill"
+        url: BUGZILLA_NEW_BUG_URL
       });
       break;
     }
+    // Add Test Records to show in the autocomplete dropdown
     case "set-test-records": {
-      await browser.experiments.autofill.setTestRecords(request.tabId, request.records);
+      await browser.experiments.autofill.setTestRecords(
+        request.tabId,
+        request.records
+      );
       break;
     }
     case "change-field-attribute": {
@@ -367,18 +352,35 @@ async function handleMessage(request, sender, sendResponse) {
       download(blob, request.filename)
       break;
     }
+    case "hide": {
+      await removeAllHighlightOverlay(request.tabId);
+      break;
+    }
+    /**
+     * Autofill Inspector Panel Commands
+     */
+    case "scroll": {
+      scrollIntoView(
+        request.tabId,
+        request.inspectId,
+        request.frameId
+      );
+      break;
+    }
+    case "highlight": {
+      addHighlightOverlay(request);
+      break;
+    }
+    case "highlight-remove": {
+      removeHighlightOverlay(
+        request.tabId,
+        request.type,
+        request.inspectId,
+        request.frameId
+      );
+      break;
+    }
   }
-
-  // Should i use browser.tabs.sendMessage
-  //if (sender.url != browser.runtime.getURL("/devtools/panel/panel.html")) {
-    //return;
-  //}
-
-  //browser.tabs.executeScript(
-    //request.tabId,
-    //{
-      //code: request.script
-    //});
 }
 
 /**

@@ -1,33 +1,41 @@
-const lazy = {};
-
-ChromeUtils.defineESModuleGetters(lazy, {
+ChromeUtils.defineESModuleGetters(this, {
   WebNavigationFrames: "resource://gre/modules/WebNavigationFrames.sys.mjs",
 });
 
+function getActorByTabId(tabId, tabManager) {
+  const { browser } = tabManager.get(tabId);
+  const windowGlobal = browser.browsingContext.currentWindowGlobal;
+  return windowGlobal?.getActor("FormAutofill");
+}
 
 this.autofill = class extends ExtensionAPI {
-  // Ideally we'd be able to implement onUninstall and onUpdate static methods,
-  // as described in
-  // https://firefox-source-docs.mozilla.org/toolkit/components/extensions/webextensions/lifecycle.html
-  // However, this doesn't work for "experiment" APIs - see bug 1485541.
-
   getAPI(context) {
     const { tabManager } = context.extension;
+
     return {
       experiments: {
         autofill: {
-          // CaptureTab. V3 Doesn't have this
-          async test(tabId, x, y, width, height) {
+          // TODO: Explain why we need this CaptureTab. V3 Doesn't have this
+          async captureTab(tabId, x, y, width, height) {
+            // Copied from https://searchfox.org/mozilla-central/rev/4e69784010d271c0fce0927442e4f8e66ffe645b/toolkit/components/extensions/parent/ext-tabs-base.js#112
             const { browser } = tabManager.get(tabId);
-            const windowGlobal = browser.browsingContext.currentWindowGlobal;
-            const rect = new context.xulBrowser.ownerGlobal.window.DOMRect(x, y, width, height);
+
             const zoom = browser.browsingContext.fullZoom;
             const scale = browser.browsingContext.topChromeWindow.devicePixelRatio || 1;
-            const image = await windowGlobal.drawSnapshot(rect, scale * zoom, "white");
+            const rect = new context.xulBrowser.ownerGlobal.window.DOMRect(x, y, width, height);
+
+            const wgp = browser.browsingContext.currentWindowGlobal;
+            const image = await wgp.drawSnapshot(
+              rect,
+              scale * zoom,
+              "white"
+            );
+
             const canvas = new OffscreenCanvas(image.width, image.height);
 
             const ctx = canvas.getContext("bitmaprenderer", { alpha: false });
             ctx.transferFromImageBitmap(image);
+
             const blob = await canvas.convertToBlob({
               type: `image/png`,
             });
@@ -42,32 +50,24 @@ this.autofill = class extends ExtensionAPI {
           },
 
           async inspect(tabId) {
+            const actor = getActorByTabId(tabId, tabManager);
 
-            const { browser } = tabManager.get(tabId);
-            const topBC = browser.browsingContext.top;
-            const windowGlobal = topBC.currentWindowGlobal;
-            if (!windowGlobal) {
-              return;
-            }
-
-            const actor = windowGlobal.getActor("FormAutofill");
             const roots = await actor.inspectFields();
 
             const fieldDetails = [];
-            const bcs = topBC.getAllBrowsingContextsInSubtree();
+            const bcs = actor.browsingContext.getAllBrowsingContextsInSubtree();
             for (const root of roots) {
-              const rootIndex = roots.indexOf(root);
+              const formIndex = roots.indexOf(root);
               for (const section of root) {
                 const sectionIndex = root.indexOf(section);
-                section.fieldDetails.forEach(fd => fd.rootIndex = rootIndex);
+                section.fieldDetails.forEach(fd => fd.formIndex = formIndex);
                 section.fieldDetails.forEach(fd => fd.sectionIndex = sectionIndex);
 
                 for (const fieldDetail of section.fieldDetails) {
                   const bc = bcs.find(bc => bc.id == fieldDetail.browsingContextId);
                   const host = bc.currentWindowGlobal.documentPrincipal.host;
 
-                  fieldDetail.frameId = lazy.WebNavigationFrames.getFrameId(bc);
-                  console.log("[FrameId]" + fieldDetail.frameId);
+                  fieldDetail.frameId = WebNavigationFrames.getFrameId(bc);
 
                   if (!bc || bc == bc.top) {
                     fieldDetail.frame = `(M) ${host}`;
@@ -82,18 +82,12 @@ this.autofill = class extends ExtensionAPI {
               }
             }
 
-            console.log("[Dimi]Fields are " + fieldDetails.map(f => f.fieldName));
             return fieldDetails;
           },
 
           async setTestRecords(tabId, records) {
-            const { browser } = tabManager.get(tabId);
-            const windowGlobal = browser.browsingContext.currentWindowGlobal;
-            if (!windowGlobal) {
-              return;
-            }
+            const actor = getActorByTabId(tabId, tabManager);
 
-            const actor = windowGlobal.getActor("FormAutofill");
             await actor.setTestRecords(records);
           },
         },
