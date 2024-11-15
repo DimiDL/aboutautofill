@@ -54,36 +54,10 @@ function findNextIndex(array, currentIndex, condition) {
   return array.length;
 }
 
-async function loadData(filename) {
-  try {
-    const url = browser.runtime.getURL(filename);
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      throw new Error("Network response was not ok " + response.statusText);
-    }
-
-    let data;
-    const extension = url.split('.').pop().toLowerCase();
-    if (extension === "json") {
-      data = await response.json();
-    } else {
-      data = await response.text();
-    }
-    return data;
-  } catch (error) {
-    console.error("Failed to load JSON data:", error);
-  }
-}
-
 class AutofillInspector {
   #inspectedFieldDetails = null;
 
   #rowToFieldDetail = new Map();
-
-  #testAddresses = null;
-
-  #testCreditCards = null;
 
   constructor() {
     document.addEventListener("DOMContentLoaded", () => this.init(), { once: true });
@@ -135,21 +109,31 @@ class AutofillInspector {
   }
 
   onScreenshot() {
-    browser.devtools.inspectedWindow.eval(`
-      ({
-        width: document.documentElement.scrollWidth,
-        height: document.documentElement.scrollHeight,
-      })`, ({ width, height }) =>
-      this.sendMessage("screenshot", { x: 0, y: 0, width, height })
-    );
+    this.sendMessage("screenshot")
   }
 
   onDownloadPage() {
     this.sendMessage("freeze");
   }
 
-  onReportIssue() {
-    this.sendMessage("report");
+  async onGenerateTest() {
+    if (!this.#inspectedFieldDetails) {
+      // TODO: Show warning dialog
+      return;
+    }
+    const inspectResult = this.fieldDetailsToTestExpectedResult(this.#inspectedFieldDetails);
+
+    this.sendMessage("generate-testcase", { inspectResult });
+  }
+
+  async onReportIssue() {
+    if (!this.#inspectedFieldDetails) {
+      // TODO: Show warning dialog
+      return;
+    }
+    const inspectResult = this.fieldDetailsToTestExpectedResult(this.#inspectedFieldDetails);
+
+    this.sendMessage("report", { inspectResult });
   }
 
   onEditFields(event) {
@@ -212,38 +196,14 @@ class AutofillInspector {
     event.target.classList.toggle("editing");
   }
 
-  async onGenerateTest() {
-    if (!this.#inspectedFieldDetails) {
-      //this.onInspect();
-    }
-    const template = await this.getTestTemplate();
-    const result = this.fieldDetailsToTestExpectedResult(this.#inspectedFieldDetails);
-    const { width, height } = await browser.devtools.inspectedWindow.eval(
-      `({
-          width: document.documentElement.scrollWidth,
-          height: document.documentElement.scrollHeight,
-      })`
-    );
-
-    this.sendMessage(
-      "generate-testcase",
-      { template, result, x: 0, y: 0, width, height }
-    );
-  }
-
   async onAddOrRemoveTestRecord() {
-    const records = [];
-    if (document.getElementById("autofill-add-address-button").checked) {
-      const addresses = await this.getTestAddresses();
-      records.push(...addresses);
-    };
-
-    if (document.getElementById("autofill-add-credit-card-button").checked) {
-      const creditcards = await this.getTestCreditCards();
-      records.push(...creditcards);
-    }
-
-    this.sendMessage("set-test-records", { records });
+    this.sendMessage(
+      "set-test-records",
+      {
+        address: document.getElementById("autofill-add-address-button").checked,
+        creditcard: document.getElementById("autofill-add-credit-card-button").checked,
+      }
+    );
   }
 
   // TODO: Maybe we should just export the HTML?
@@ -525,24 +485,6 @@ class AutofillInspector {
         }
       });
     });
-  }
-
-  async getTestAddresses() {
-    if (!this.#testAddresses) {
-      this.#testAddresses = await loadData("data/test-addresses.json");
-    }
-    return this.#testAddresses;
-  }
-
-  async getTestCreditCards() {
-    if (!this.#testCreditCards) {
-      this.#testCreditCards = await loadData("data/test-credit-cards.json");
-    }
-    return this.#testCreditCards;
-  }
-
-  async getTestTemplate() {
-    return await loadData("data/gecko-autofill-test-template.js");
   }
 
   fieldDetailsToTestExpectedResult(fieldDetails) {

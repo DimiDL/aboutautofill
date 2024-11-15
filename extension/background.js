@@ -9,6 +9,49 @@ async function getHostNameByTabId(tabId) {
   return urlObj.hostname;
 }
 
+async function loadData(filename) {
+  try {
+    const url = browser.runtime.getURL(filename);
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error("Network response was not ok " + response.statusText);
+    }
+
+    let data;
+    const extension = url.split('.').pop().toLowerCase();
+    if (extension === "json") {
+      data = await response.json();
+    } else {
+      data = await response.text();
+    }
+    return data;
+  } catch (error) {
+    console.error("Failed to load JSON data:", error);
+  }
+}
+
+async function getTestAddresses() {
+  return await loadData("data/test-addresses.json");
+}
+
+async function getTestCreditCards() {
+  return await loadData("data/test-credit-cards.json");
+}
+
+async function getTestTemplate() {
+  return await loadData("data/gecko-autofill-test-template.js");
+}
+
+function blobToArrayBuffer(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(blob);
+  });
+}
+
 function dataURLToBlob(url) {
   const binary = atob(url.split(",", 2)[1]);
   let contentType = url.split(",", 1)[0];
@@ -23,8 +66,7 @@ function dataURLToBlob(url) {
   return blob;
 }
 
-
-function download(blob, filename, saveAs = true) {
+function download(filename, blob, saveAs = true) {
   const url = URL.createObjectURL(blob);
 
   // Trigger download with a save-as dialog
@@ -204,25 +246,34 @@ async function freezePage(tabId) {
   return pages;
 }
 
-function generateTest(template, inspectResult, host) {
-  const filename = `"${host}.html"`;
+async function generateTest(host, inspectResult) {
+  const filename = `test-${host}.html`;
+
+  const template = await getTestTemplate();
+
   let text = template.replace("{{filename}}", filename);
   let formattedJson = JSON.stringify(inspectResult, null, 2);
   formattedJson = formattedJson.replace(/^/gm, ' '.repeat(6));
   text = text.replace("{{expectedResult}}", formattedJson);
   text = text.replace("{{filePath}}", `"fixtures/third_party/${host}/"`);
-  return text;
+  return { filename, blob: text };
 }
 
-async function screenshotPage(tabId, x, y, width, height) {
-  const dataUrl = await browser.experiments.autofill.captureTab(
-    tabId,
-    x,
-    y,
-    width,
-    height,
-  );
-  return dataURLToBlob(dataUrl);
+async function screenshotPage(tabId, host) {
+  const filename = `screenshot-${host}.png`;
+
+  const [{result}] = await browser.scripting.executeScript({
+    target: { tabId },
+    func: () => ({
+      width: document.documentElement.scrollWidth,
+      height: document.documentElement.scrollHeight,
+    }),
+  });
+
+  const dataUrl =
+    await browser.experiments.autofill.captureTab(tabId, 0, 0, result.width, result.height);
+  const blob = dataURLToBlob(dataUrl);
+  return { filename, blob };
 }
 
 function changeFieldAttribute({ tabId, inspectId, frameId, attribute, value }) {
@@ -246,6 +297,52 @@ function changeFieldAttribute({ tabId, inspectId, frameId, attribute, value }) {
 
 }
 
+const WEB_PAGE = 0x01;
+const GECKO_TEST = 0x02;
+const PAGE_SCREENSHOT = 0x04;
+
+async function createReport(tabId, type, { zip = true, wantDownload = true, inspectResult = null }) {
+  const host = await getHostNameByTabId(tabId);
+
+  const files = [];
+  if (type & WEB_PAGE) {
+    const pages = await freezePage(tabId);
+    files.push(...pages);
+  }
+
+  if (type & GECKO_TEST) {
+    const testcase = await generateTest(host, inspectResult);
+    files.push(testcase);
+  }
+
+  if (type & PAGE_SCREENSHOT) {
+    const screenshot = await screenshotPage(tabId, host);
+    files.push(screenshot);
+  }
+
+  if (zip) {
+    const url = browser.runtime.getURL("/libs/jszip.js");
+    await import(url);
+    const zip = JSZip();
+    for (const file of files) {
+      zip.file(file.filename, file.blob);
+    }
+    const blob = await zip.generateAsync({ type: "blob" });
+    if (wantDownload) {
+      download(`report-${host}.zip`, blob);
+    }
+    return blob;
+  } else {
+    if (wantDownload) {
+      for (const file of files) {
+        download(file.filename, file.blob);
+      }
+    } else {
+      return files;
+    }
+  }
+}
+
 /**
  * When we receive the message, execute the given script in the given tab.
  */
@@ -265,82 +362,104 @@ async function handleMessage(request, sender, sendResponse) {
     }
     // Download the page mark
     case "freeze": {
-      const host = await getHostNameByTabId(request.tabId);
-
-      const url = browser.runtime.getURL("/libs/jszip.js");
-      import(url).then(async module => {
-        const zip = JSZip();
-        const pages = await freezePage(request.tabId);
-        for (const page of pages) {
-          zip.file(page.filename, page.blob);
-        }
-        const blob = await zip.generateAsync({ type: "blob" });
-        download(blob, `testcase-${host}.zip`);
-      });
+      createReport(request.tabId, WEB_PAGE, { zip: true });
       break;
     }
     // Generate a testcase
     case "generate-testcase": {
-      const host = await getHostNameByTabId(request.tabId);
-
-      const url = browser.runtime.getURL("/libs/jszip.js");
-      import(url).then(async module => {
-        const dir = `test-${host}`;
-        const zip = JSZip();
-
-        // Testcase
-        const testcase = generateTest(request.template, request.result, host);
-        zip.file(`${dir}/${host}.js`, testcase);
-
-        // Web Page Freezed Markup
-        const pages = await freezePage(request.tabId);
-        for (const page of pages) {
-          zip.file(page.filename, page.blob);
-        }
-
-        // Web Page Screenshot
-        const screenBlob = await screenshotPage(
-          request.tabId,
-          request.x,
-          request.y,
-          request.width,
-          request.height
-        );
-        zip.file(`${dir}/${host}.png`, screenBlob);
-
-        const blob = await zip.generateAsync({ type: "blob" });
-        download(blob, `${host}.zip`);
-      });
+      createReport(
+        request.tabId,
+        PAGE_SCREENSHOT | WEB_PAGE | GECKO_TEST,
+        { zip: true, inspectResult: request.inspectResult }
+      );
       break;
     }
     // Screenshot the tab
     case "screenshot": {
-      const blob = await screenshotPage(
-        request.tabId,
-        request.x,
-        request.y,
-        request.width,
-        request.height
-      );
-
-      const host = await getHostNameByTabId(request.tabId);
-      download(blob, `dom-${host}.png`);
+      createReport(request.tabId, PAGE_SCREENSHOT, { zip: false });
       break;
     }
     // File a Site Compatibility Bug Report
     case "report": {
+      const host = await getHostNameByTabId(request.tabId);
       // TODO: Need attachmenbt, url, summary, and description
-      browser.tabs.create({
-        url: BUGZILLA_NEW_BUG_URL
+      browser.tabs.create({url: BUGZILLA_NEW_BUG_URL}, (tab) => {
+        browser.tabs.onUpdated.addListener(async function listener(tabId, changeInfo) {
+          if (tabId != tab.id) {
+            return;
+          }
+
+          console.log("[Dimi]onUpdated input " + changeInfo.status);
+          if (changeInfo.status != "complete") {
+            return;
+          }
+
+          const blob = await createReport(
+            request.tabId,
+            PAGE_SCREENSHOT | WEB_PAGE | GECKO_TEST,
+            { zip: true, wantDownload: false, inspectResult: request.inspectResult }
+          );
+          const arrayBuffer = await blobToArrayBuffer(blob);
+          const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+
+          browser.scripting.executeScript({
+            target: {
+              tabId: tab.id,
+            },
+            func: (host, base64ZipContent) => {
+              const input = document.getElementById("bug_file_loc");
+              if (input) {
+                input.value = `https://${host}`;
+              }
+              const btn = document.getElementById("attach-new-file");
+              if (btn) {
+                btn.click();
+              }
+              const file = document.getElementById("att-file");
+              if (file) {
+                const binaryString = atob(base64ZipContent);
+                const len = binaryString.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
+                  bytes[i] = binaryString.charCodeAt(i);
+                }
+                const zipBlob = new Blob([bytes], { type: "application/zip" });
+                const testFile= new File([zipBlob], "uploaded.zip", { type: "application/zip" });
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(testFile);
+
+                // Assign the files to the input
+                file.files = dataTransfer.files;
+                const event = new Event("change", { bubbles: true });
+                file.dispatchEvent(event);
+
+                console.log("File uploaded successfully:", file.files[0].name);
+              }
+              console.log("[Dimi]set <<")
+            },
+            args: [host, base64]
+          });
+
+          // Remove the listener after injection
+          browser.tabs.onUpdated.removeListener(listener);
+        });
       });
       break;
     }
     // Add Test Records to show in the autocomplete dropdown
     case "set-test-records": {
-      await browser.experiments.autofill.setTestRecords(
-        request.tabId,
-        request.records
-      );
+      const records = [];
+      if (request.address) {
+        const addresses = await getTestAddresses();
+        records.push(...addresses);
+      };
+
+      if (request.creditcard) {
+        const creditcards = await getTestCreditCards();
+        records.push(...creditcards);
+      }
+
+      browser.experiments.autofill.setTestRecords(request.tabId, records);
       break;
     }
     case "change-field-attribute": {
@@ -349,7 +468,7 @@ async function handleMessage(request, sender, sendResponse) {
     }
     case "download": {
       const blob = dataURLToBlob(request.dataUrl);
-      download(blob, request.filename)
+      download(request.filename, blob)
       break;
     }
     case "hide": {
