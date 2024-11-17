@@ -231,6 +231,10 @@ async function freezePage(tabId) {
           //console.log("ok..canNOT find with include");
         //}
         html = html.replace(regex, `<iframe src="${path}"`);
+
+        // Ensure we can load iframe in test
+        html = html.replace(`frame-src`, `frame-src 'self'`);
+
       }
     } else {
       filename = `${new URL(frame.url).host}/${idx}.html`;
@@ -247,15 +251,17 @@ async function freezePage(tabId) {
 }
 
 async function generateTest(host, inspectResult) {
-  const filename = `test-${host}.html`;
+  //const filename = `browser_${host.replace(/\./g, '_')}.js`;
+  const filename = `test/${host}.json`;
+
+  const text = JSON.stringify(inspectResult, null, 2);
 
   const template = await getTestTemplate();
-
-  let text = template.replace("{{filename}}", filename);
-  let formattedJson = JSON.stringify(inspectResult, null, 2);
-  formattedJson = formattedJson.replace(/^/gm, ' '.repeat(6));
-  text = text.replace("{{expectedResult}}", formattedJson);
-  text = text.replace("{{filePath}}", `"fixtures/third_party/${host}/"`);
+  //let text = template.replace("{{filename}}", filename);
+  //let formattedJson = JSON.stringify(inspectResult, null, 2);
+  //formattedJson = formattedJson.replace(/^/gm, ' '.repeat(6));
+  //text = text.replace("{{expectedResult}}", formattedJson);
+  //text = text.replace("{{filePath}}", `"fixtures/third_party/${host}/"`);
   return { filename, blob: text };
 }
 
@@ -307,6 +313,11 @@ async function createReport(tabId, type, { zip = true, wantDownload = true, insp
   const files = [];
   if (type & WEB_PAGE) {
     const pages = await freezePage(tabId);
+    if (zip) {
+      pages.forEach(page => {
+        page.filename = `page/${page.filename}`;
+      });
+    }
     files.push(...pages);
   }
 

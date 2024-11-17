@@ -230,6 +230,9 @@ class AutofillInspector {
     this.sendMessage("download", { filename, dataUrl });
   }
 
+  // TODO: Add data-moz-autofill-field-type=xxx
+  //       for machine learning purpose
+  //       All visible fields, add "unknown"
   #buttonClickHandlers = [
     ["autofill-inspect-start-button", () => this.onInspect()],
     ["autofill-inspect-element-button", () => this.onInspectElement()],
