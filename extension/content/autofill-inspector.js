@@ -81,6 +81,10 @@ class AutofillInspector {
     switch (request.msg) {
       case 'inspect-complete': {
         this.updateFieldsInfo(request.data);
+
+        // Unblock those waiting for inspect results
+        this.onInspectCompleteResolver?.();
+        this.onInspectCompleteResolver = null;
         break;
       }
       case 'show': {
@@ -112,31 +116,42 @@ class AutofillInspector {
     this.sendMessage("screenshot")
   }
 
-  onDownloadPage() {
-    this.sendMessage("freeze");
+  async onDownloadPage() {
+    if (!this.#inspectedFieldDetails) {
+      const waitForInspect = new Promise(resolve => this.onInspectCompleteResolver = resolve);
+      this.sendMessage("inspect");
+      await waitForInspect;
+    }
+    this.sendMessage("freeze", { fieldDetails: this.#inspectedFieldDetails });
   }
 
   async onGenerateTest() {
     if (!this.#inspectedFieldDetails) {
-      // TODO: Show warning dialog
-      return;
+      const waitForInspect = new Promise(resolve => this.onInspectCompleteResolver = resolve);
+      this.sendMessage("inspect");
+      await waitForInspect;
     }
-    const inspectResult = this.fieldDetailsToTestExpectedResult(this.#inspectedFieldDetails);
 
-    this.sendMessage("generate-testcase", { inspectResult });
+    this.sendMessage("generate-testcase", { fieldDetails: this.#inspectedFieldDetails });
   }
 
   async onReportIssue() {
     if (!this.#inspectedFieldDetails) {
-      // TODO: Show warning dialog
-      return;
+      const waitForInspect = new Promise(resolve => this.onInspectCompleteResolver = resolve);
+      this.sendMessage("inspect");
+      await waitForInspect;
     }
-    const inspectResult = this.fieldDetailsToTestExpectedResult(this.#inspectedFieldDetails);
 
-    this.sendMessage("report", { inspectResult });
+    this.sendMessage("report", { fieldDetails: this.#inspectedFieldDetails });
   }
 
-  onEditFields(event) {
+  async onEditFields(event) {
+    if (!this.#inspectedFieldDetails) {
+      const waitForInspect = new Promise(resolve => this.onInspectCompleteResolver = resolve);
+      this.sendMessage("inspect");
+      await waitForInspect;
+    }
+
     let hasChanged = false;
     const isEditing = event.target.classList.contains("editing");
     document.querySelectorAll("td#col-fieldName").forEach(cell => {
@@ -146,8 +161,6 @@ class AutofillInspector {
           hasChanged = true;
           const tr = select.closest("tr");
           const fieldDetail = this.#rowToFieldDetail.get(tr);
-          // TODO: We should not change the underlying element.
-          // It will cause testcase not matches...
           this.sendMessage(
             "change-field-attribute",
             {
@@ -250,9 +263,6 @@ class AutofillInspector {
   ]
 
   init() {
-    // TODO: remove this???
-    this.sendMessage("init");
-
     for (const [id, handler] of this.#buttonClickHandlers) {
       const button = document.getElementById(id);
       button.addEventListener("click", handler);
@@ -490,33 +500,6 @@ class AutofillInspector {
     });
   }
 
-  fieldDetailsToTestExpectedResult(fieldDetails) {
-    let expectedSection;
-    const sections = [];
-    let formIndex;
-    let sectionIndex;
-    for (const fieldDetail of fieldDetails) {
-      if (fieldDetail.formIndex != formIndex ||
-          fieldDetail.sectionIndex != sectionIndex) {
-        formIndex = fieldDetail.formIndex;
-        sectionIndex = fieldDetail.sectionIndex;
-
-        expectedSection = {
-          fields: [],
-        };
-        sections.push(expectedSection);
-      }
-      let expectedField = {
-        fieldName: fieldDetail.fieldName,
-        reason: fieldDetail.reason,
-      };
-      if (fieldDetail.part) {
-        expectedField.part = fieldDetail.part;
-      }
-      expectedSection.fields.push(expectedField);
-    }
-    return sections;
-  }
 }
 
 let inspector = new AutofillInspector();
