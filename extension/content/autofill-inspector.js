@@ -80,7 +80,9 @@ class AutofillInspector {
 
     switch (request.msg) {
       case 'inspect-complete': {
-        this.updateFieldsInfo(request.data);
+        // Clone the field detail array
+        this.#inspectedFieldDetails = Array.from(request.data, item => ({ ...item }));
+        this.updateFieldsInfo(this.#inspectedFieldDetails);
 
         // Unblock those waiting for inspect results
         this.onInspectCompleteResolver?.();
@@ -112,45 +114,64 @@ class AutofillInspector {
     browser.devtools.inspectedWindow.eval(js).catch((e) => console.error(e));
   }
 
-  onScreenshot() {
-    this.sendMessage("screenshot")
+  async waitForInspect() {
+    if (!this.#inspectedFieldDetails) {
+      const waitForInspect = new Promise(resolve => this.onInspectCompleteResolver = resolve);
+      this.sendMessage("inspect");
+      await waitForInspect;
+    }
+  }
+
+  async captureInspectorPanel() {
+    // TODO: Can this move to the background script?
+    // Use html2Canvas to screenshot
+    const element = document.querySelector(".autofill-panel");
+    const width = element.scrollWidth;
+    const height =
+      document.querySelector(".devtools-toolbar").scrollHeight +
+      document.querySelector(".field-list-scroll").scrollHeight
+
+    const canvas = await html2canvas(element, {
+      allowTaint: true,
+      useCORS: true,
+      x: 0,
+      y: 0,
+      width,
+      height: height,
+      windowHeight: height,
+    });
+
+    return canvas.toDataURL("image/png");
+  }
+
+  async onScreenshot() {
+    await this.waitForInspect();
+
+    const panelDataUrl = await this.captureInspectorPanel();
+    this.sendMessage("export-inspect", { panelDataUrl, saveAs: false });
   }
 
   async onDownloadPage() {
-    if (!this.#inspectedFieldDetails) {
-      const waitForInspect = new Promise(resolve => this.onInspectCompleteResolver = resolve);
-      this.sendMessage("inspect");
-      await waitForInspect;
-    }
+    await this.waitForInspect();
+
     this.sendMessage("freeze", { fieldDetails: this.#inspectedFieldDetails });
   }
 
-  async onGenerateTest() {
-    if (!this.#inspectedFieldDetails) {
-      const waitForInspect = new Promise(resolve => this.onInspectCompleteResolver = resolve);
-      this.sendMessage("inspect");
-      await waitForInspect;
-    }
+  async onGenerateReport() {
+    await this.waitForInspect();
 
-    this.sendMessage("generate-testcase", { fieldDetails: this.#inspectedFieldDetails });
+    const panelDataUrl = await this.captureInspectorPanel();
+    this.sendMessage("generate-report", { panelDataUrl, fieldDetails: this.#inspectedFieldDetails });
   }
 
   async onReportIssue() {
-    if (!this.#inspectedFieldDetails) {
-      const waitForInspect = new Promise(resolve => this.onInspectCompleteResolver = resolve);
-      this.sendMessage("inspect");
-      await waitForInspect;
-    }
+    await this.waitForInspect();
 
     this.sendMessage("report", { fieldDetails: this.#inspectedFieldDetails });
   }
 
   async onEditFields(event) {
-    if (!this.#inspectedFieldDetails) {
-      const waitForInspect = new Promise(resolve => this.onInspectCompleteResolver = resolve);
-      this.sendMessage("inspect");
-      await waitForInspect;
-    }
+    await this.waitForInspect();
 
     let hasChanged = false;
     const isEditing = event.target.classList.contains("editing");
@@ -209,6 +230,10 @@ class AutofillInspector {
     event.target.classList.toggle("editing");
   }
 
+  onFilterFields() {
+    this.updateFieldsInfo(this.#inspectedFieldDetails);
+  }
+
   async onAddOrRemoveTestRecord() {
     this.sendMessage(
       "set-test-records",
@@ -217,30 +242,6 @@ class AutofillInspector {
         creditcard: document.getElementById("autofill-add-credit-card-button").checked,
       }
     );
-  }
-
-  // TODO: Maybe we should just export the HTML?
-  async onExportInspectResult() {
-    // Use html2Canvas to screenshot
-    const element = document.querySelector(".autofill-panel");
-    const width = element.scrollWidth;
-    const height =
-      document.querySelector(".devtools-toolbar").scrollHeight +
-      document.querySelector(".field-list-scroll").scrollHeight
-
-    const canvas = await html2canvas(element, {
-      allowTaint: true,
-      useCORS: true,
-      x: 0,
-      y: 0,
-      width,
-      height: height,
-      windowHeight: height,
-    });
-
-    const filename = "screenshot.png";
-    const dataUrl = canvas.toDataURL("image/png");
-    this.sendMessage("download", { filename, dataUrl });
   }
 
   // TODO: Add data-moz-autofill-field-type=xxx
@@ -253,11 +254,12 @@ class AutofillInspector {
     ["autofill-download-button", () => this.onDownloadPage()],
     ["autofill-report-button", () => this.onReportIssue()],
     ["autofill-edit-field-button", (event) => this.onEditFields(event)],
-    ["autofill-generate-test-button", () => this.onGenerateTest()],
-    ["autofill-export-button", () => this.onExportInspectResult()],
+    ["autofill-generate-test-button", () => this.onGenerateReport()],
   ]
 
   #checkboxChangeHandlers = [
+    ["autofill-show-invisible-button", () => this.onFilterFields()],
+    ["autofill-show-unknown-button", () => this.onFilterFields()],
     ["autofill-add-address-button", () => this.onAddOrRemoveTestRecord()],
     ["autofill-add-credit-card-button", () => this.onAddOrRemoveTestRecord()],
   ]
@@ -277,9 +279,9 @@ class AutofillInspector {
       {id: "col-root", text: "Root"},
       {id: "col-section", text: "Section"},
       {id: "col-frame", text: "Frame"},
-      {id: "col-identifier", text: "Id/Name"},
       {id: "col-fieldName", text: "FieldName"},
       {id: "col-reason", text: "Reason"},
+      {id: "col-identifier", text: "Id/Name"},
       {id: "col-isVisible", text: "Visible"},
       {id: "col-part", text: "Part"},
       {id: "col-confidence", text: "Confidence"},
@@ -312,27 +314,13 @@ class AutofillInspector {
     );
   }
 
-  addHighlightOverlay(type, fieldDetail) {
-    this.sendMessage(
-      "highlight",
-      {
-        type,
-        inspectId: fieldDetail.inspectId,
-        frameId: fieldDetail.frameId,
-      }
-    );
+  addHighlightOverlay(type, fieldDetails) {
+    this.sendMessage("highlight", { type, fieldDetails });
   }
 
   // Type should be either `select` or `hover`
-  removeHighlightOverlay(type, fieldDetail) {
-    this.sendMessage(
-      "highlight-remove",
-      {
-        type,
-        inspectId: fieldDetail.inspectId,
-        frameId: fieldDetail.frameId,
-      }
-    );
+  removeHighlightOverlay(type, fieldDetails) {
+    this.sendMessage("highlight-remove", { type, fieldDetails });
   }
 
   getSpannedRows(td) {
@@ -355,29 +343,45 @@ class AutofillInspector {
   setupRowMouseOver(tr, fieldDetail) {
     tr.addEventListener("mouseover", (event) => {
       event.preventDefault();
+      let rows;
       if (event.target.hasAttribute("rowspan")) {
         tr.classList.add('className', 'autofill-hide-highlight');
-        return;
+        rows = this.getSpannedRows(event.target);
+      } else {
+        rows = [tr];
       }
 
-      this.addHighlightOverlay("hover", fieldDetail);
       this.scrollIntoView(fieldDetail);
+      this.addHighlightOverlay("hover", rows.map(r => this.#rowToFieldDetail.get(r)));
     });
 
     tr.addEventListener("mouseout", (event) => {
       event.preventDefault();
+      let rows;
       if (event.target.hasAttribute("rowspan")) {
         tr.classList.remove('className', 'autofill-hide-highlight');
-        return;
+        rows = this.getSpannedRows(event.target);
+      } else {
+        rows = [tr];
       }
 
-      this.removeHighlightOverlay("hover", fieldDetail);
+      this.removeHighlightOverlay("hover", rows.map(r => this.#rowToFieldDetail.get(r)));
     });
   }
 
   updateFieldsInfo(fieldDetails) {
-    // Clone the field detail array
-    this.#inspectedFieldDetails = Array.from(fieldDetails, item => ({ ...item }));
+    this.#rowToFieldDetail.clear();
+    const showInvisible = document.getElementById("autofill-show-invisible-button").checked;
+    const showUnknown = document.getElementById("autofill-show-unknown-button").checked;
+    fieldDetails = fieldDetails.filter(fieldDetail => {
+      if (!fieldDetail.isVisible && !showInvisible) {
+        return false;
+      }
+      if (!fieldDetail.fieldName && !showUnknown) {
+        return false;
+      }
+      return true;
+    });
 
     const tbody = document.getElementById("form-analysis-table-body");
     while (tbody.firstChild) {
@@ -391,11 +395,17 @@ class AutofillInspector {
     let sectionNextIndex;
     let frameNextIndex;
 
-    for (let index = 0; index < this.#inspectedFieldDetails?.length; index++) {
+    for (let index = 0; index < fieldDetails?.length; index++) {
       const fieldDetail = fieldDetails[index];
 
       const tr = document.createElement("tr");
       tr.classList.add("field-list-item");
+      if (!fieldDetail.isVisible) {
+        tr.classList.add("invisible");
+      }
+      if (!fieldDetail.fieldName) {
+        tr.classList.add("unknown");
+      }
 
       // Setup the mouse over handler for this row
       this.#rowToFieldDetail.set(tr, fieldDetail);
@@ -480,22 +490,21 @@ class AutofillInspector {
 
     document.querySelectorAll(".field-list-item").forEach(tr => {
       tr.addEventListener("click", () => {
-        //if (["col-root", "col-section", "col-frame"].includes(event.target.id)) {
-        let rows;
-        if (event.target.hasAttribute("rowspan")) {
-          rows = this.getSpannedRows(event.target);
-        } else {
-          rows = [tr];
-        }
+        const rows = event.target.hasAttribute("rowspan") ?
+          this.getSpannedRows(event.target) : [tr];
 
+        let remove = [];
+        let add = [];
         for (const row of rows) {
           if (row.classList.contains("selected")) {
-            this.removeHighlightOverlay("select", this.#rowToFieldDetail.get(row));
+            remove.push(this.#rowToFieldDetail.get(row));
           } else {
-            this.addHighlightOverlay("select", this.#rowToFieldDetail.get(row))
+            add.push(this.#rowToFieldDetail.get(row));
           }
           row.classList.toggle("selected");
         }
+        this.removeHighlightOverlay("select", remove);
+        this.addHighlightOverlay("select", add);
       });
     });
   }

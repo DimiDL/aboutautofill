@@ -13,6 +13,9 @@
   --primary-toolbar-height: 29px;
   --table-zebra-background: light-dark(rgba(247, 247, 247, 0.8), rgba(255,255,255,0.05));
   --table-selection-background-hover: light-dark(rgba(209, 232, 255, 0.8), rgba(53, 59, 72, 1));
+
+  --item-invisible-color: light-dark(var(--red-70), var(--red-20));
+  --item-unknown-color: light-dark(var(--red-70), var(--red-20));
 }
 
 html,
@@ -125,7 +128,6 @@ body,
   border-bottom: 1px solid var(--theme-splitter-color);
   font: message-box;
   height: var(--theme-toolbar-height);
-  color: var(--theme-toolbar-color);
 }
 
 /* Field list headers */
@@ -167,6 +169,18 @@ body,
 
 .field-list-item.autofill-section-even {
   background-color: var(--table-zebra-background);
+}
+
+/*
+ * Showing invisible or  requests in red should always have priority
+ * except when the request is selected.
+ */
+.field-list-item:not(.selected):not([rowspan]).invisible {
+  color: var(--item-invisible-color) !important;
+}
+
+.field-list-item:not(.selected):not([rowspan]).unknown {
+  color: var(--item-unknown-color) !important;
 }
 
 .field-list-item:not(.selected):not(.autofill-hide-highlight):hover td:not([rowspan]) {
@@ -221,13 +235,9 @@ body,
 }
 
 .devtools-button.autofill-screenshot-button::before {
-  background-image: url("/content/icons/screenshot.svg");
+  background-image: url("/content/icons/command-screenshot.svg");
   background-size: 16px 16px;
   background-repeat: no-repeat;
-}
-
-.devtools-button.autofill-export-button::before {
-  background-image: url("/content/icons/command-screenshot.svg");
 }
 
 .devtools-button.autofill-download-button::before {

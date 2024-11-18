@@ -9,6 +9,10 @@ function fieldDetailsToTestExpectedResult(fieldDetails) {
   let formIndex;
   let sectionIndex;
   for (const fieldDetail of fieldDetails) {
+    if (!fieldDetail.fieldName || (!fieldDetail.isVisible && fieldDetail.localName == "input")) {
+      continue;
+    }
+
     if (fieldDetail.formIndex != formIndex ||
         fieldDetail.sectionIndex != sectionIndex) {
       formIndex = fieldDetail.formIndex;
@@ -37,7 +41,7 @@ async function getHostNameByTabId(tabId) {
   return urlObj.hostname;
 }
 
-async function loadData(filename) {
+async function loadData(filename, type = null) {
   try {
     const url = browser.runtime.getURL(filename);
     const response = await fetch(url);
@@ -48,7 +52,9 @@ async function loadData(filename) {
 
     let data;
     const extension = url.split('.').pop().toLowerCase();
-    if (extension === "json") {
+    if (type == "blob") {
+      data = await response.blob();
+    } else if (extension === "json") {
       data = await response.json();
     } else {
       data = await response.text();
@@ -142,44 +148,53 @@ function scrollIntoView(tabId, inspectId, frameId) {
   });
 }
 
-async function addHighlightOverlay({ tabId, type, inspectId, frameId }) {
-  browser.scripting.executeScript({
-    target: {
-      tabId,
-      frameIds: [frameId],
-    },
-    func: (type, inspectId) => {
-      const color = type == 'select' ? 'blue' : 'red';
-      const bgColor = type == 'select' ? 'rgba(0, 0, 255, 0.2)' : 'rgba(255, 0, 0, 0.2)';
-      const zIndex = type == 'select' ? 9999 : 9998;
+async function addHighlightOverlay(tabId, type, fieldDetails) {
+  const frames = await browser.webNavigation.getAllFrames({ tabId });
+  for (const frame of frames) {
+    const inspectIds = fieldDetails
+      .filter(fd => fd.frameId == frame.frameId)
+      .map(fd => fd.inspectId);
+    browser.scripting.executeScript({
+      target: {
+        tabId,
+        frameIds: [frame.frameId],
+      },
+      func: (type, inspectIds) => {
+        inspectIds.forEach(inspectId => {
+          const color = type == 'select' ? 'blue' : 'red';
+          const bgColor = type == 'select' ? 'rgba(0, 0, 255, 0.2)' : 'rgba(255, 0, 0, 0.2)';
+          const zIndex = type == 'select' ? 9999 : 9998;
 
-      const selector = `[data-moz-autofill-inspect-id="${inspectId}"]`;
-      const element = document.querySelector(selector);
-      if (!element) {
-        return;
-      }
+          const selector = `[data-moz-autofill-inspect-id="${inspectId}"]`;
+          const element = document.querySelector(selector);
+          if (!element) {
+            return;
+          }
 
-      const highlightOverlay = document.createElement("div");
-      highlightOverlay.classList.add("moz-autofill-overlay");
-      highlightOverlay.id = `moz-${type}-highlight-overlay-${inspectId}`;
-      document.body.appendChild(highlightOverlay);
+          const highlightOverlay = document.createElement("div");
+          highlightOverlay.classList.add("moz-autofill-overlay");
+          highlightOverlay.id = `moz-${type}-highlight-overlay-${inspectId}`;
+          document.body.appendChild(highlightOverlay);
 
-      Object.assign(highlightOverlay.style, {
-        position: "absolute",
-        backgroundColor: `${bgColor}`,
-        border: `2px solid ${color}`,
-        zIndex: zIndex,
-        pointerEvents: "none",
-      });
+          const BORDER = 2;
+          Object.assign(highlightOverlay.style, {
+            position: "absolute",
+            backgroundColor: `${bgColor}`,
+            border: `${BORDER}px solid ${color}`,
+            zIndex: zIndex,
+            pointerEvents: "none",
+          });
 
-      const rect = element.getBoundingClientRect();
-      highlightOverlay.style.top = rect.top + window.scrollY + 'px';
-      highlightOverlay.style.left = rect.left + window.scrollX + 'px';
-      highlightOverlay.style.width = rect.width + 'px';
-      highlightOverlay.style.height = rect.height + 'px';
-    },
-    args: [type, inspectId]
-  });
+          const rect = element.getBoundingClientRect();
+          highlightOverlay.style.top = rect.top + window.scrollY - BORDER + 'px';
+          highlightOverlay.style.left = rect.left + window.scrollX - BORDER + 'px';
+          highlightOverlay.style.width = rect.width + 'px';
+          highlightOverlay.style.height = rect.height + 'px';
+        });
+      },
+      args: [type, inspectIds]
+    });
+  }
 }
 
 async function removeAllHighlightOverlay(tabId) {
@@ -196,18 +211,26 @@ async function removeAllHighlightOverlay(tabId) {
   });
 }
 
-async function removeHighlightOverlay(tabId, type, inspectId, frameId) {
-  browser.scripting.executeScript({
-    target: {
-      tabId,
-      frameIds: [frameId],
-    },
-    func: (type, inspectId) => {
-      const overlay = document.getElementById(`moz-${type}-highlight-overlay-${inspectId}`);
-      overlay?.remove();
-    },
-    args: [type, inspectId]
-  });
+async function removeHighlightOverlay(tabId, type, fieldDetails) {
+  const frames = await browser.webNavigation.getAllFrames({ tabId });
+  for (const frame of frames) {
+    const inspectIds = fieldDetails
+      .filter(fd => fd.frameId == frame.frameId)
+      .map(fd => fd.inspectId);
+    browser.scripting.executeScript({
+      target: {
+        tabId,
+        frameIds: [frame.frameId],
+      },
+      func: (type, inspectIds) => {
+        inspectIds.forEach(inspectId => {
+          const overlay = document.getElementById(`moz-${type}-highlight-overlay-${inspectId}`);
+          overlay?.remove();
+        });
+      },
+      args: [type, inspectIds]
+    });
+  }
 }
 
 /**
@@ -362,9 +385,7 @@ async function generateTest(host, fieldDetails) {
   return { filename, blob: text };
 }
 
-async function screenshotPage(tabId, host) {
-  const filename = `screenshot-${host}.png`;
-
+async function screenshotPage(tabId) {
   const [{result}] = await browser.scripting.executeScript({
     target: { tabId },
     func: () => ({
@@ -375,8 +396,7 @@ async function screenshotPage(tabId, host) {
 
   const dataUrl =
     await browser.experiments.autofill.captureTab(tabId, 0, 0, result.width, result.height);
-  const blob = dataURLToBlob(dataUrl);
-  return { filename, blob };
+  return dataURLToBlob(dataUrl);
 }
 
 async function changeFieldAttribute(tabId, inspectId, frameId, attribute, newValue) {
@@ -414,8 +434,9 @@ async function changeFieldAttribute(tabId, inspectId, frameId, attribute, newVal
 const WEB_PAGE = 0x01;
 const GECKO_TEST = 0x02;
 const PAGE_SCREENSHOT = 0x04;
+const INSPECT_EXPORT = 0x08;
 
-async function createReport(tabId, type, { zip = true, wantDownload = true, fieldDetails = null }) {
+async function createReport(tabId, type, { zip = true, panelBlob = null, saveAs = true, fieldDetails = null}) {
   const host = await getHostNameByTabId(tabId);
 
   const files = [];
@@ -432,11 +453,27 @@ async function createReport(tabId, type, { zip = true, wantDownload = true, fiel
   if (type & GECKO_TEST) {
     const testcase = await generateTest(host, fieldDetails);
     files.push(testcase);
+
+    const blob = await loadData("data/gen-test.py", "blob");
+    files.push({
+      filename: `gen-test.py`,
+      blob
+    });
   }
 
   if (type & PAGE_SCREENSHOT) {
-    const screenshot = await screenshotPage(tabId, host);
-    files.push(screenshot);
+    const blob = await screenshotPage(tabId);
+    files.push({
+      filename: `screenshot-${host}.png`,
+      blob,
+    });
+  }
+
+  if (type & INSPECT_EXPORT) {
+    files.push({
+      filename: `inspect-${host}.png`,
+      blob: panelBlob,
+    });
   }
 
   if (zip) {
@@ -446,18 +483,12 @@ async function createReport(tabId, type, { zip = true, wantDownload = true, fiel
     for (const file of files) {
       zip.file(file.filename, file.blob);
     }
+    const prefix = type == WEB_PAGE ? "page" : "report";
     const blob = await zip.generateAsync({ type: "blob" });
-    if (wantDownload) {
-      download(`report-${host}.zip`, blob);
-    }
-    return blob;
+      download(`${prefix}-${host}.zip`, blob, saveAs);
   } else {
-    if (wantDownload) {
-      for (const file of files) {
-        download(file.filename, file.blob);
-      }
-    } else {
-      return files;
+    for (const file of files) {
+      download(file.filename, file.blob, saveAs);
     }
   }
 }
@@ -481,34 +512,34 @@ async function handleMessage(request, sender, sendResponse) {
     }
     // Download the page mark
     case "freeze": {
-      createReport(request.tabId, WEB_PAGE, { zip: true, fieldDetails: request.fieldDetails });
+      createReport(request.tabId, WEB_PAGE, { zip: true, fieldDetails: request.fieldDetails});
       break;
     }
-    // Generate a testcase
-    case "generate-testcase": {
+    // Generate a report with everything
+    case "generate-report": {
+      const panelBlob = dataURLToBlob(request.panelDataUrl);
       createReport(
         request.tabId,
-        PAGE_SCREENSHOT | WEB_PAGE | GECKO_TEST,
-        { zip: true, fieldDetails: request.fieldDetails }
+        PAGE_SCREENSHOT | WEB_PAGE | GECKO_TEST | INSPECT_EXPORT,
+        { zip: true, panelBlob, fieldDetails: request.fieldDetails }
       );
       break;
     }
-    // Screenshot the tab
-    case "screenshot": {
-      createReport(request.tabId, PAGE_SCREENSHOT, { zip: false });
+    case "export-inspect": {
+      // Screenshot the tab and Sceenshot the autofill inspect panel
+      const panelBlob = dataURLToBlob(request.panelDataUrl);
+      createReport(request.tabId, PAGE_SCREENSHOT | INSPECT_EXPORT, { zip: false, panelBlob, saveAs: request.saveAs});
       break;
     }
     // File a Site Compatibility Bug Report
     case "report": {
       const host = await getHostNameByTabId(request.tabId);
 
-      const blob = await createReport(
+      await createReport(
         request.tabId,
         PAGE_SCREENSHOT | WEB_PAGE | GECKO_TEST,
-        { zip: true, wantDownload: false, fieldDetails: request.fieldDetails }
+        { zip: true, fieldDetails: request.fieldDetails }
       );
-      const arrayBuffer = await blobToArrayBuffer(blob);
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
 
       // TODO: Need attachmenbt, url, summary, and description
       browser.tabs.create({url: BUGZILLA_NEW_BUG_URL}, (tab) => {
@@ -570,7 +601,7 @@ async function handleMessage(request, sender, sendResponse) {
             target: {
               tabId: tab.id,
             },
-            func: (host, base64ZipContent) => {
+            func: (host) => {
               const input = document.getElementById("bug_file_loc");
               if (input) {
                 input.value = `https://${host}`;
@@ -579,33 +610,12 @@ async function handleMessage(request, sender, sendResponse) {
               if (btn) {
                 btn.click();
               }
-              const file = document.getElementById("att-file");
-              if (file) {
-                const binaryString = atob(base64ZipContent);
-                const len = binaryString.length;
-                const bytes = new Uint8Array(len);
-                for (let i = 0; i < len; i++) {
-                  bytes[i] = binaryString.charCodeAt(i);
-                }
-                const zipBlob = new Blob([bytes], { type: "application/zip" });
-                const testFile= new File([zipBlob], "uploaded.zip", { type: "application/zip" });
-                const dataTransfer = new DataTransfer();
-                dataTransfer.items.add(testFile);
-
-                // Assign the files to the input
-                file.files = dataTransfer.files;
-                const event = new Event("change", { bubbles: true });
-                file.dispatchEvent(event);
-
-                console.log("File uploaded successfully:", file.files[0].name);
-              }
 
               const dialog = document.getElementById('moz-autofill-inspector-dialog');
               dialog?.close();
               dialog?.remove();
-              console.log("[Dimi]set <<")
             },
-            args: [host, base64]
+            args: [host]
           });
 
           // Remove the listener after injection
@@ -661,15 +671,18 @@ async function handleMessage(request, sender, sendResponse) {
       break;
     }
     case "highlight": {
-      addHighlightOverlay(request);
+      addHighlightOverlay(
+        request.tabId,
+        request.type,
+        request.fieldDetails
+      );
       break;
     }
     case "highlight-remove": {
       removeHighlightOverlay(
         request.tabId,
         request.type,
-        request.inspectId,
-        request.frameId
+        request.fieldDetails
       );
       break;
     }

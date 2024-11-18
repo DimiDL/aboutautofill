@@ -32,7 +32,7 @@
         "libs/jszip.js",
         "data/test-addresses.json",
         "data/test-credit-cards.json",
-        "data/gecko-autofill-test-template.js"
+        "data/gen-test.py"
       ],
       "matches": ["<all_urls>"]
     }
