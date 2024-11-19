@@ -3,6 +3,13 @@ const BUGZILLA_NEW_BUG_URL = "https://bugzilla.mozilla.org/enter_bug.cgi?product
 /**
  * Utility Functions
  */
+function notifyProgress(tabId, progress) {
+  browser.runtime.sendMessage({
+    msg: 'notify-progress',
+    tabId,
+    progress
+  });
+}
 function fieldDetailsToTestExpectedResult(fieldDetails) {
   let expectedSection;
   const sections = [];
@@ -73,10 +80,6 @@ async function getTestCreditCards() {
   return await loadData("data/test-credit-cards.json");
 }
 
-async function getTestTemplate() {
-  return await loadData("data/gecko-autofill-test-template.js");
-}
-
 function blobToArrayBuffer(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -100,21 +103,15 @@ function dataURLToBlob(url) {
   return blob;
 }
 
-function download(filename, blob, saveAs = true) {
-  const url = URL.createObjectURL(blob);
-
+async function download(filename, blob, saveAs = true) {
   // Trigger download with a save-as dialog
-  browser.downloads.download({
-    url: url,
-    filename: filename,
-    saveAs
-  }).then(() => {
-    console.log("Download triggered successfully.");
-    URL.revokeObjectURL(url); // Clean up the Blob URL after download
-  }).catch((error) => {
-    // Dimi: Users cancel, just ignore it
-    console.error("Error triggering download:", error);
-  });
+  try {
+    const url = URL.createObjectURL(blob);
+    await browser.downloads.download({url, filename, saveAs});
+  } finally {
+    // Clean up the Blob URL after download
+    URL.revokeObjectURL(url);
+  }
 }
 
 /**
@@ -296,26 +293,33 @@ async function freezePage(tabId, fieldDetails) {
   // However, we also want to "restore" the values we set after downloading
   // it. To do that, we keep what we changed and restore them in the end of
   // this function.
+  notifyProgress(tabId, "freezing page - storing changed attributes");
   const changedAttributes = await beforeFreeze(tabId, frames, fieldDetails);
 
   for (let idx = 0; idx < frames.length; idx++) {
     const frame = frames[idx];
     const promise = new Promise((resolve) => {
-      function waitForFreeze(request, sender, sendResponse) {
-        if (request.msg === "freeze-complete") {
-          resolve(request.result);
+      function waitForFreeze(request) {
+        if (request.msg === "content-freeze-complete") {
+          resolve(request.html);
           browser.runtime.onMessage.removeListener(waitForFreeze);
         }
       }
       browser.runtime.onMessage.addListener(waitForFreeze);
     });
 
+    notifyProgress(tabId, `freezing frame (${idx+1}/${frames.length}) - ${frame.url}`);
     browser.scripting.executeScript({
       target: {
         tabId,
         frameIds: [frame.frameId],
       },
       files: ["/content/content-script.js"],
+    }).then(() => {
+      browser.tabs.sendMessage(tabId, { message: "content-freeze-page" }, { frameId: frame.frameId });
+    }).catch((error) => {
+      notifyProgress(tabId, `Error freezing frame (${idx+1}/${frames.length}) - ${frame.url} : ${error}`);
+      return;
     });
     let html = await promise;
 
@@ -358,6 +362,7 @@ async function freezePage(tabId, fieldDetails) {
     })
   }
 
+  notifyProgress(tabId, "freezing page - restoring changed attributes");
   for (const { frameId, result } of changedAttributes) {
     for (const [inspectId, attributes] of Object.entries(result)) {
       for (const [k, v] of Object.entries(attributes)) {
@@ -371,17 +376,8 @@ async function freezePage(tabId, fieldDetails) {
 
 async function generateTest(host, fieldDetails) {
   const inspectResult = fieldDetailsToTestExpectedResult(fieldDetails);
-  //const filename = `browser_${host.replace(/\./g, '_')}.js`;
   const filename = `test/${host}.json`;
-
   const text = JSON.stringify(inspectResult, null, 2);
-
-  //const template = await getTestTemplate();
-  //let text = template.replace("{{filename}}", filename);
-  //let formattedJson = JSON.stringify(inspectResult, null, 2);
-  //formattedJson = formattedJson.replace(/^/gm, ' '.repeat(6));
-  //text = text.replace("{{expectedResult}}", formattedJson);
-  //text = text.replace("{{filePath}}", `"fixtures/third_party/${host}/"`);
   return { filename, blob: text };
 }
 
@@ -423,7 +419,6 @@ async function changeFieldAttribute(tabId, inspectId, frameId, attribute, newVal
         element.setAttribute(temporary, JSON.stringify(originalAttributes));
       }
 
-
       // Update the attribute
       element.setAttribute(attribute, newValue)
     },
@@ -436,11 +431,12 @@ const GECKO_TEST = 0x02;
 const PAGE_SCREENSHOT = 0x04;
 const INSPECT_EXPORT = 0x08;
 
-async function createReport(tabId, type, { zip = true, panelBlob = null, saveAs = true, fieldDetails = null}) {
+async function createReport(tabId, type, { zip = true, panelDataUrl = null, saveAs = true, fieldDetails = null}) {
   const host = await getHostNameByTabId(tabId);
 
   const files = [];
   if (type & WEB_PAGE) {
+    notifyProgress(tabId, "freezing page");
     const pages = await freezePage(tabId, fieldDetails);
     if (zip) {
       pages.forEach(page => {
@@ -451,6 +447,7 @@ async function createReport(tabId, type, { zip = true, panelBlob = null, saveAs 
   }
 
   if (type & GECKO_TEST) {
+    notifyProgress(tabId, "generating test");
     const testcase = await generateTest(host, fieldDetails);
     files.push(testcase);
 
@@ -462,6 +459,7 @@ async function createReport(tabId, type, { zip = true, panelBlob = null, saveAs 
   }
 
   if (type & PAGE_SCREENSHOT) {
+    notifyProgress(tabId, "screenshotting page");
     const blob = await screenshotPage(tabId);
     files.push({
       filename: `screenshot-${host}.png`,
@@ -470,13 +468,16 @@ async function createReport(tabId, type, { zip = true, panelBlob = null, saveAs 
   }
 
   if (type & INSPECT_EXPORT) {
+    notifyProgress(tabId, "exporting inspect result");
+    const blob = dataURLToBlob(panelDataUrl);
     files.push({
       filename: `inspect-${host}.png`,
-      blob: panelBlob,
+      blob,
     });
   }
 
   if (zip) {
+    notifyProgress(tabId, "compressing files");
     const url = browser.runtime.getURL("/libs/jszip.js");
     await import(url);
     const zip = JSZip();
@@ -491,67 +492,104 @@ async function createReport(tabId, type, { zip = true, panelBlob = null, saveAs 
       download(file.filename, file.blob, saveAs);
     }
   }
+  notifyProgress(tabId, "done");
 }
 
+async function uploadAttachmentToBugzilla(tabId, filename, type, panelDataUrl) {
+  notifyProgress(tabId, "exporting inspect result");
+  const blob = dataURLToBlob(panelDataUrl);
+  const arrayBuffer = await blobToArrayBuffer(blob);
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+
+  notifyProgress(tabId, "uploading file");
+  await browser.scripting.executeScript({
+    target: {
+      tabId,
+    },
+    func: (filename, type, base64) => {
+      const file = document.getElementById("att-file");
+      if (!file) {
+        return;
+      }
+
+      const binaryString = atob(base64);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const zipBlob = new Blob([bytes], { type });
+      const testFile= new File([zipBlob], filename, { type });
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(testFile);
+
+      // Assign the files to the input
+      file.files = dataTransfer.files;
+      const event = new Event("change", { bubbles: true });
+      file.dispatchEvent(event);
+    },
+    args: [filename, type, base64]
+  });
+
+}
 /**
  * When we receive the message, execute the given script in the given tab.
  */
 async function handleMessage(request, sender, sendResponse) {
-  console.log("receive msg " + request.msg + "");
+  const tabId = request.tabId;
+  if (!tabId) {
+    return;
+  }
   switch (request.msg) {
     // Run autofill fields inspection
     case "inspect": {
-      await removeAllHighlightOverlay(request.tabId);
-      const result = await browser.experiments.autofill.inspect(request.tabId);
+      await removeAllHighlightOverlay(tabId);
+      const result = await browser.experiments.autofill.inspect(tabId);
       browser.runtime.sendMessage({
         msg: 'inspect-complete',
-        tabId: request.tabId,
+        tabId,
         data: result
       }).catch(() => {});
       break;
     }
     // Download the page mark
     case "freeze": {
-      createReport(request.tabId, WEB_PAGE, { zip: true, fieldDetails: request.fieldDetails});
+      const { fieldDetails } = request;
+      createReport(tabId, WEB_PAGE, { zip: true, fieldDetails });
       break;
     }
     // Generate a report with everything
     case "generate-report": {
-      const panelBlob = dataURLToBlob(request.panelDataUrl);
+      const { panelDataUrl, saveAs, fieldDetails } = request;
       createReport(
-        request.tabId,
+        tabId,
         PAGE_SCREENSHOT | WEB_PAGE | GECKO_TEST | INSPECT_EXPORT,
-        { zip: true, panelBlob, fieldDetails: request.fieldDetails }
+        { zip: true, panelDataUrl, fieldDetails: fieldDetails }
       );
       break;
     }
     case "export-inspect": {
       // Screenshot the tab and Sceenshot the autofill inspect panel
-      const panelBlob = dataURLToBlob(request.panelDataUrl);
-      createReport(request.tabId, PAGE_SCREENSHOT | INSPECT_EXPORT, { zip: false, panelBlob, saveAs: request.saveAs});
+      const { panelDataUrl, saveAs } = request;
+      createReport(tabId, PAGE_SCREENSHOT | INSPECT_EXPORT, { zip: false, panelDataUrl, saveAs });
       break;
     }
     // File a Site Compatibility Bug Report
-    case "report": {
-      const host = await getHostNameByTabId(request.tabId);
+    case "report-issue": {
+      const { panelDataUrl } = request;
+      const host = await getHostNameByTabId(tabId);
 
-      await createReport(
-        request.tabId,
-        PAGE_SCREENSHOT | WEB_PAGE | GECKO_TEST,
-        { zip: true, fieldDetails: request.fieldDetails }
-      );
-
-      // TODO: Need attachmenbt, url, summary, and description
+      notifyProgress(tabId, "opening bugzilla");
       browser.tabs.create({url: BUGZILLA_NEW_BUG_URL}, (tab) => {
         browser.tabs.onUpdated.addListener(async function listener(tabId, changeInfo) {
           if (tabId != tab.id) {
             return;
           }
 
-          console.log("[Dimi]onUpdated input " + changeInfo.status);
           if (changeInfo.status != "complete") {
             return;
           }
+
 
           browser.scripting.executeScript({
             target: { tabId: tab.id },
@@ -593,14 +631,12 @@ async function handleMessage(request, sender, sendResponse) {
                 }
               }
 
-              const dialog = showDialog("Filling Information for you...");
+              showDialog("Filling Information for you...");
             },
           });
 
           browser.scripting.executeScript({
-            target: {
-              tabId: tab.id,
-            },
+            target: { tabId: tab.id },
             func: (host) => {
               const input = document.getElementById("bug_file_loc");
               if (input) {
@@ -610,12 +646,19 @@ async function handleMessage(request, sender, sendResponse) {
               if (btn) {
                 btn.click();
               }
+            },
+            args: [host]
+          });
 
+          uploadAttachmentToBugzilla(tab.id, "inspect.png", "image/png", panelDataUrl);
+
+          browser.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => {
               const dialog = document.getElementById('moz-autofill-inspector-dialog');
               dialog?.close();
               dialog?.remove();
             },
-            args: [host]
           });
 
           // Remove the listener after injection
@@ -624,66 +667,48 @@ async function handleMessage(request, sender, sendResponse) {
       });
       break;
     }
+    case "change-field-attribute": {
+      const { inspectId, frameId, attribute, value } = request;
+      changeFieldAttribute(tabId, inspectId, frameId, attribute, value);
+      break;
+    }
     // Add Test Records to show in the autocomplete dropdown
     case "set-test-records": {
+      const { address, creditcard } = request;
       const records = [];
-      if (request.address) {
+      if (address) {
         const addresses = await getTestAddresses();
         records.push(...addresses);
       };
 
-      if (request.creditcard) {
+      if (creditcard) {
         const creditcards = await getTestCreditCards();
         records.push(...creditcards);
       }
 
-      browser.experiments.autofill.setTestRecords(request.tabId, records);
-      break;
-    }
-    case "change-field-attribute": {
-      changeFieldAttribute(
-        request.tabId,
-        request.inspectId,
-        request.frameId,
-        request.attribute,
-        request.value
-      );
-      break;
-    }
-    case "download": {
-      const blob = dataURLToBlob(request.dataUrl);
-      download(request.filename, blob)
-      break;
-    }
-    case "hide": {
-      await removeAllHighlightOverlay(request.tabId);
+      browser.experiments.autofill.setTestRecords(tabId, records);
       break;
     }
     /**
      * Autofill Inspector Panel Commands
      */
+    case "hide": {
+      await removeAllHighlightOverlay(tabId);
+      break;
+    }
     case "scroll": {
-      scrollIntoView(
-        request.tabId,
-        request.inspectId,
-        request.frameId
-      );
+      const { inspectId, frameId } = request;
+      scrollIntoView(tabId, inspectId, frameId);
       break;
     }
     case "highlight": {
-      addHighlightOverlay(
-        request.tabId,
-        request.type,
-        request.fieldDetails
-      );
+      const { type, fieldDetails } = request;
+      addHighlightOverlay(tabId, type, fieldDetails);
       break;
     }
     case "highlight-remove": {
-      removeHighlightOverlay(
-        request.tabId,
-        request.type,
-        request.fieldDetails
-      );
+      const { type, fieldDetails } = request;
+      removeHighlightOverlay(tabId, type, fieldDetails);
       break;
     }
   }

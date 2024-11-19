@@ -1,18 +1,11 @@
-
-console.log("load content script!");
-const url = browser.runtime.getURL("libs/freeze-dry.es.js");
-import(url).then(async module => {
-  if (window.top != window.self) {
-    console.log("freeze in iframe!" + window.location.href);
-  } else {
-    console.log("freeze in main frame!" + window.location.href);
+console.log(`Content Script loaded`);
+browser.runtime.onMessage.addListener(data => {
+  if (data.message == 'content-freeze-page') {
+    const url = browser.runtime.getURL("libs/freeze-dry.es.js");
+    import(url).then(async module => {
+      const html = await module.freezeDry(document, {});
+      const msg = "content-freeze-complete";
+      browser.runtime.sendMessage({ msg, html });
+    });
   }
-  const html = await module.freezeDry(document, {});
-
-  browser.runtime.sendMessage({
-    msg: "freeze-complete",
-    result: html,
-    frameIdentifier: window.location.href,
-  });
 });
-

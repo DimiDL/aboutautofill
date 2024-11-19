@@ -93,6 +93,11 @@ class AutofillInspector {
         document.querySelectorAll("tr.selected").forEach(row =>
           this.addHighlightOverlay("select", this.#rowToFieldDetail.get(row))
         );
+        break;
+      }
+      case 'notify-progress': {
+        this.onUpdateProgressStatus(request.progress);
+        break;
       }
     }
   }
@@ -145,6 +150,7 @@ class AutofillInspector {
   }
 
   async onScreenshot() {
+    this.onUpdateProgressStatus("exporting inspect result");
     await this.waitForInspect();
 
     const panelDataUrl = await this.captureInspectorPanel();
@@ -152,12 +158,14 @@ class AutofillInspector {
   }
 
   async onDownloadPage() {
+    this.onUpdateProgressStatus("downloading page");
     await this.waitForInspect();
 
     this.sendMessage("freeze", { fieldDetails: this.#inspectedFieldDetails });
   }
 
   async onGenerateReport() {
+    this.onUpdateProgressStatus("generating report");
     await this.waitForInspect();
 
     const panelDataUrl = await this.captureInspectorPanel();
@@ -165,11 +173,18 @@ class AutofillInspector {
   }
 
   async onReportIssue() {
+    this.onUpdateProgressStatus("reporting issue");
     await this.waitForInspect();
 
-    this.sendMessage("report", { fieldDetails: this.#inspectedFieldDetails });
+    const panelDataUrl = await this.captureInspectorPanel();
+    this.sendMessage("report-issue", { panelDataUrl, fieldDetails: this.#inspectedFieldDetails });
   }
 
+  // TODO:
+  // - Different button icon so we know we need to apply
+  // - Show different color or add icon to modified field
+  // - Support edit "Reason"
+  // - DO not change FieldName size in edit mode
   async onEditFields(event) {
     await this.waitForInspect();
 
@@ -244,9 +259,11 @@ class AutofillInspector {
     );
   }
 
-  // TODO: Add data-moz-autofill-field-type=xxx
-  //       for machine learning purpose
-  //       All visible fields, add "unknown"
+  onUpdateProgressStatus(progressText) {
+    const element = document.querySelector(".autofill-progress-status");
+    element.textContent = progressText;
+
+  }
   #buttonClickHandlers = [
     ["autofill-inspect-start-button", () => this.onInspect()],
     ["autofill-inspect-element-button", () => this.onInspectElement()],
