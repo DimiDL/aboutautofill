@@ -298,6 +298,12 @@ async function freezePage(tabId, fieldDetails) {
 
   for (let idx = 0; idx < frames.length; idx++) {
     const frame = frames[idx];
+
+    notifyProgress(tabId, `freezing frame (${idx+1}/${frames.length}) - ${frame.url}`);
+    if (frame.url.startsWith("about:")) {
+      continue;
+    }
+
     const promise = new Promise((resolve) => {
       function waitForFreeze(request) {
         if (request.msg === "content-freeze-complete") {
@@ -308,7 +314,6 @@ async function freezePage(tabId, fieldDetails) {
       browser.runtime.onMessage.addListener(waitForFreeze);
     });
 
-    notifyProgress(tabId, `freezing frame (${idx+1}/${frames.length}) - ${frame.url}`);
     browser.scripting.executeScript({
       target: {
         tabId,
@@ -330,6 +335,9 @@ async function freezePage(tabId, fieldDetails) {
         url = url.replace(/&/g, "&amp;");
         // Replace iframe src=url to point to local file
         const regexURL = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+
+        // TODO: Need to update this regexp
         let regex = new RegExp(`<iframe\\s+[^>]*src=["']${regexURL}["']`, 'i');
         html = html.replace(regex, `<iframe src="${path}"`);
 
