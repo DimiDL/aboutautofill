@@ -288,6 +288,7 @@ body,
 }
 
 /* select */
+.field-list-item td.changed,
 .field-list-item td select.changed {
   border: 2px solid red;
 }

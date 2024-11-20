@@ -49,17 +49,18 @@ this.autofill = class extends ExtensionAPI {
             return dataURL;
           },
 
-          async inspect(tabId) {
+          async inspect(tabId, changes) {
+            console.log("inspect with changes" + JSON.stringify(changes));
             const actor = getActorByTabId(tabId, tabManager);
 
-            const roots = await actor.inspectFields();
+            const forms = await actor.inspectFields(changes);
 
             const fieldDetails = [];
             const bcs = actor.browsingContext.getAllBrowsingContextsInSubtree();
-            for (const root of roots) {
-              const formIndex = roots.indexOf(root);
-              for (const section of root) {
-                const sectionIndex = root.indexOf(section);
+            for (const form of forms) {
+              const formIndex = forms.indexOf(form);
+              for (const section of form) {
+                const sectionIndex = form.indexOf(section);
                 section.fieldDetails.forEach(fd => fd.formIndex = formIndex);
                 section.fieldDetails.forEach(fd => fd.sectionIndex = sectionIndex);
 

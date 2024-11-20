@@ -39,6 +39,11 @@
           {
             "type": "integer",
             "name": "tabId"
+          },
+          {
+            "type": "array",
+            "name": "changes",
+            "items": { "type": "any" }
           }
         ]
       },

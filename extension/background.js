@@ -105,8 +105,8 @@ function dataURLToBlob(url) {
 
 async function download(filename, blob, saveAs = true) {
   // Trigger download with a save-as dialog
+  const url = URL.createObjectURL(blob);
   try {
-    const url = URL.createObjectURL(blob);
     await browser.downloads.download({url, filename, saveAs});
   } finally {
     // Clean up the Blob URL after download
@@ -280,7 +280,7 @@ async function beforeFreeze(tabId, frames, fieldDetails) {
 }
 
 async function freezePage(tabId, fieldDetails) {
-  const urlToPath = new Map();
+  const urlToPath = [];
   const pages = [];
   let frames = await browser.webNavigation.getAllFrames({ tabId });
   const mainFrame = frames.find(frame => frame.parentFrameId == -1);
@@ -335,33 +335,40 @@ async function freezePage(tabId, fieldDetails) {
         url = url.replace(/&/g, "&amp;");
         // Replace iframe src=url to point to local file
         const regexURL = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
+        console.log("[DImi]regexURL = " + regexURL);
 
         // TODO: Need to update this regexp
-        let regex = new RegExp(`<iframe\\s+[^>]*src=["']${regexURL}["']`, 'i');
-        html = html.replace(regex, `<iframe src="${path}"`);
-
-        // Add `self` to frame-src  Content Script PolicyEnsure to ensure we can load
-        // iframe with local file
-        html = html.replace(`frame-src`, `frame-src 'self'`);
-
-        // Remove attributes that are used by inspector
-        regex = /data-moz-autofill-inspect-id="\{[^}]*\}"/g;
-        html = html.replace(regex, '');
-        //if (html.match(regex)) {
-          //console.log("ok..can find with regex");
-        //} else {
-          //console.log("ok..canNOT find with regex");
-        //}
-        //if (html.includes(url)) {
-          //console.log("ok..can find with include");
-        //} else {
-          //console.log("ok..canNOT find with include");
-        //}
+        let regex = new RegExp(`<iframe\\s+[^>]*src=["'](${regexURL})["']`, 'i');
+        console.log("[DImi]findal regex = " + regex.toString());
+        if (html.match(regex)) {
+          console.log("ok..can find with regex");
+        } else {
+          console.log("ok..canNOT find with regex");
+        }
+        if (html.includes(url)) {
+          console.log("ok..can find with include");
+        } else {
+          console.log("ok..canNOT find with include");
+        }
+        //html = html.replace(regex, `<iframe src="${path}"`);
+        html = html.replace(regex, (match, capturedURL) => {
+          console.log("Full Match:", match);
+          console.log("Captured URL:", capturedURL); 
+          return match.replace(capturedURL, path)
+        });
       }
+
+      // Add `self` to frame-src  Content Script PolicyEnsure to ensure we can load
+      // iframe with local file
+      html = html.replace(`frame-src`, `frame-src 'self'`);
+
+      // Remove attributes that are used by inspector
+      const regex = /data-moz-autofill-inspect-id="\{[^}]*\}"/g;
+      html = html.replace(regex, '');
     } else {
+      console.log("Set URL " + frame.url);
       filename = `${new URL(frame.url).host}/${idx}.html`;
-      urlToPath.set(frame.url, filename);
+      urlToPath.push([frame.url, filename]);
       //continue;
     }
     pages.push({
@@ -428,6 +435,7 @@ async function changeFieldAttribute(tabId, inspectId, frameId, attribute, newVal
       }
 
       // Update the attribute
+      // TODO: If newVAUE IS NULL, THEN WE SHOULD REMOVE THE ATTRIBUTE
       element.setAttribute(attribute, newValue)
     },
     args: [inspectId, attribute, newValue]
@@ -551,8 +559,9 @@ async function handleMessage(request, sender, sendResponse) {
   switch (request.msg) {
     // Run autofill fields inspection
     case "inspect": {
+      const { changes } = request;
       await removeAllHighlightOverlay(tabId);
-      const result = await browser.experiments.autofill.inspect(tabId);
+      const result = await browser.experiments.autofill.inspect(tabId, changes);
       browser.runtime.sendMessage({
         msg: 'inspect-complete',
         tabId,
@@ -584,7 +593,7 @@ async function handleMessage(request, sender, sendResponse) {
     }
     // File a Site Compatibility Bug Report
     case "report-issue": {
-      const { panelDataUrl } = request;
+      const { panelDataUrl, changes } = request;
       const host = await getHostNameByTabId(tabId);
 
       notifyProgress(tabId, "opening bugzilla");
@@ -597,7 +606,6 @@ async function handleMessage(request, sender, sendResponse) {
           if (changeInfo.status != "complete") {
             return;
           }
-
 
           browser.scripting.executeScript({
             target: { tabId: tab.id },
@@ -645,17 +653,35 @@ async function handleMessage(request, sender, sendResponse) {
 
           browser.scripting.executeScript({
             target: { tabId: tab.id },
-            func: (host) => {
-              const input = document.getElementById("bug_file_loc");
-              if (input) {
-                input.value = `https://${host}`;
+            func: (host, changes) => {
+              const short_description = document.getElementById("short_desc");
+              if (short_description) {
+                const names = changes.map(c => c.fieldName);
+                let description;
+                if (names.length == 0) {
+                  description = '';
+                } else if (names.length == 1) {
+                  description = `on ${names[0]} Field`;
+                } else if (names.length == 2) {
+                  description = `on ${names[0]} and ${names[1]} Fields`;
+                } else {
+                  const last = names[names.length - 1];
+                  const others = names.slice(0, -1).join(', ');
+                  description = `on ${others}, and ${last} Fields`;
+                }
+                short_description.value =
+                  `[${host}]Autofill doesn't work ${description}`;
               }
-              const btn = document.getElementById("attach-new-file");
-              if (btn) {
-                btn.click();
+              const URL = document.getElementById("bug_file_loc");
+              if (URL) {
+                URL.value = `https://${host}`;
+              }
+              const attachFile = document.getElementById("attach-new-file");
+              if (attachFile) {
+                attachFile.click();
               }
             },
-            args: [host]
+            args: [host, changes]
           });
 
           uploadAttachmentToBugzilla(tab.id, "inspect.png", "image/png", panelDataUrl);
@@ -675,11 +701,11 @@ async function handleMessage(request, sender, sendResponse) {
       });
       break;
     }
-    case "change-field-attribute": {
-      const { inspectId, frameId, attribute, value } = request;
-      changeFieldAttribute(tabId, inspectId, frameId, attribute, value);
-      break;
-    }
+    //case "change-field-attribute": {
+      //const { inspectId, frameId, attribute, value } = request;
+      //changeFieldAttribute(tabId, inspectId, frameId, attribute, value);
+      //break;
+    //}
     // Add Test Records to show in the autocomplete dropdown
     case "set-test-records": {
       const { address, creditcard } = request;

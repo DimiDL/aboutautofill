@@ -54,7 +54,19 @@ function findNextIndex(array, currentIndex, condition) {
   return array.length;
 }
 
+function findTdInSameRowById(targetTd, id) {
+  const parentRow = targetTd.closest('tr');
+  if (!parentRow) {
+    return null;
+  }
+
+  const targetTdById = parentRow.querySelector(`td#${id}`);
+  return targetTdById;
+}
+
 class AutofillInspector {
+  #changes = new Map();
+
   #inspectedFieldDetails = null;
 
   #rowToFieldDetail = new Map();
@@ -102,9 +114,14 @@ class AutofillInspector {
     }
   }
 
-  onInspect() {
+  onClickInspect() {
+    this.#changes.clear();
+    this.inspect();
+  }
+
+  inspect() {
     this.#inspectedFieldDetails = null;
-    this.sendMessage("inspect");
+    this.sendMessage("inspect", { changes: Array.from(this.#changes.values()) });
   }
 
   onInspectElement() {
@@ -122,7 +139,7 @@ class AutofillInspector {
   async waitForInspect() {
     if (!this.#inspectedFieldDetails) {
       const waitForInspect = new Promise(resolve => this.onInspectCompleteResolver = resolve);
-      this.sendMessage("inspect");
+      this.inspect();
       await waitForInspect;
     }
   }
@@ -177,13 +194,20 @@ class AutofillInspector {
     await this.waitForInspect();
 
     const panelDataUrl = await this.captureInspectorPanel();
-    this.sendMessage("report-issue", { panelDataUrl, fieldDetails: this.#inspectedFieldDetails });
+    this.sendMessage("report-issue",
+      {
+        panelDataUrl,
+        fieldDetails: this.#inspectedFieldDetails,
+        changes: Array.from(this.#changes.values())
+      }
+    );
   }
 
   // TODO:
+  // - Fix the coding...
+  // = Need to know the original value
   // - Different button icon so we know we need to apply
   // - Show different color or add icon to modified field
-  // - Support edit "Reason"
   // - DO not change FieldName size in edit mode
   async onEditFields(event) {
     await this.waitForInspect();
@@ -191,26 +215,38 @@ class AutofillInspector {
     let hasChanged = false;
     const isEditing = event.target.classList.contains("editing");
     document.querySelectorAll("td#col-fieldName").forEach(cell => {
+      const tr = cell.closest("tr");
+      const fieldDetail = this.#rowToFieldDetail.get(tr);
+
       if (isEditing) {
+        // Done editing, let's update the value
         const select = cell.querySelector("select");
         if (select.classList.contains("changed")) {
           hasChanged = true;
-          const tr = select.closest("tr");
-          const fieldDetail = this.#rowToFieldDetail.get(tr);
-          this.sendMessage(
-            "change-field-attribute",
-            {
-              frameId: fieldDetail.frameId,
-              inspectId: fieldDetail.inspectId,
-              attribute: "autocomplete",
-              value: select.value,
-            }
-          );
+          const change = { inspectId: fieldDetail.inspectId }
+          const tdReason = findTdInSameRowById(cell, `col-reason`);
+          const reasonSelect = tdReason.querySelector("select");
+          if (reasonSelect) {
+            tdReason.textContent = reasonSelect.value;
+            change["reason"] = reasonSelect.value;
+          }
+          reasonSelect?.remove();
+          change["fieldName"] = select.value;
+          this.#changes.set(fieldDetail.inspectId, change);
+        } else {
+          this.#changes.delete(fieldDetail.inspectId);
         }
         cell.textContent = select.value;
         select.remove();
+
       } else {
+        // Clear when editing
+        cell.classList.remove("changed");
+
         const select = document.createElement("select");
+        if (this.#changes.has(fieldDetail.inspectId)) {
+          select.classList.add("changed");
+        }
 
         [...ADDRESS_TYPES, ...CREDIT_CARD_TYPES].forEach(fieldName => {
           const option = document.createElement("option");
@@ -230,6 +266,32 @@ class AutofillInspector {
         select.addEventListener("change", () => {
           if (select.selectedIndex !== 0) {
             select.classList.add("changed");
+            // TODO: Also Make Reason Field Changeable
+            const tdReason = findTdInSameRowById(cell, `col-reason`);
+            if (!tdReason.querySelector("select")) {
+              const reasonSelect = document.createElement("select");
+              ["autocomplete", "update-heuristic", "regex-heuristic", "fathom"].forEach(reason => {
+                const option = document.createElement("option");
+                option.value = reason;
+                option.textContent = reason;
+                if (reason === cell.textContent) {
+                  // Move the matched <select> to the first one
+                  reasonSelect.insertBefore(option, reasonSelect.firstChild);
+                  option.reasonSelected = true;
+                } else {
+                  reasonSelect.appendChild(option);
+                }
+              });
+              reasonSelect.addEventListener("change", () => {
+                if (reasonSelect.reasonSelectedIndex !== 0) {
+                  reasonSelect.classList.add("changed");
+                } else {
+                  reasonSelect.classList.remove("changed");
+                }
+              });
+              tdReason.innerHTML = "";
+              tdReason.appendChild(reasonSelect);
+            }
           } else {
             select.classList.remove("changed");
           }
@@ -240,7 +302,7 @@ class AutofillInspector {
       }
     });
     if (hasChanged) {
-      this.onInspect();
+      this.inspect();
     }
     event.target.classList.toggle("editing");
   }
@@ -265,7 +327,7 @@ class AutofillInspector {
 
   }
   #buttonClickHandlers = [
-    ["autofill-inspect-start-button", () => this.onInspect()],
+    ["autofill-inspect-start-button", () => this.onClickInspect()],
     ["autofill-inspect-element-button", () => this.onInspectElement()],
     ["autofill-screenshot-button", () => this.onScreenshot()],
     ["autofill-download-button", () => this.onDownloadPage()],
@@ -489,6 +551,12 @@ class AutofillInspector {
           default: {
             if (!fieldDetail.isVisible) {
               td.classList.add("autofill-invisible-field");
+            }
+
+            if (column.id == "col-fieldName") {
+              if (this.#changes.has(fieldDetail.inspectId)) {
+                td.classList.add("changed");
+              }
             }
 
             const text = this.fieldDetailToColumnValue(column.id, fieldDetail);
