@@ -1,7 +1,18 @@
-const BUGZILLA_NEW_BUG_URL = "https://bugzilla.mozilla.org/enter_bug.cgi?product=Toolkit&component=Form+Autofill";
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+"use strict";
+
+/* global browser JSZip */
 
 /**
- * Utility Functions
+ * Sends a progress notification message to the inspector panel.
+ *
+ * @param {number} tabId
+ *        The ID of the inspected tab where progress is being notified.
+ * @param {String} progress
+ *        The current progress string.
  */
 function notifyProgress(tabId, progress) {
   browser.runtime.sendMessage({
@@ -10,45 +21,32 @@ function notifyProgress(tabId, progress) {
     progress
   });
 }
-function fieldDetailsToTestExpectedResult(fieldDetails) {
-  let expectedSection;
-  const sections = [];
-  let formIndex;
-  let sectionIndex;
-  for (const fieldDetail of fieldDetails) {
-    if (!fieldDetail.fieldName || (!fieldDetail.isVisible && fieldDetail.localName == "input")) {
-      continue;
-    }
 
-    if (fieldDetail.formIndex != formIndex ||
-        fieldDetail.sectionIndex != sectionIndex) {
-      formIndex = fieldDetail.formIndex;
-      sectionIndex = fieldDetail.sectionIndex;
-
-      expectedSection = {
-        fields: [],
-      };
-      sections.push(expectedSection);
-    }
-    let expectedField = {
-      fieldName: fieldDetail.fieldName,
-      reason: fieldDetail.reason,
-    };
-    if (fieldDetail.part) {
-      expectedField.part = fieldDetail.part;
-    }
-    expectedSection.fields.push(expectedField);
-  }
-  return sections;
-}
-
+/**
+ * Retrieves the hostname of a tab based on its ID.
+ *
+ * @param {number} tabId
+ *        The ID of the tab to retrieve the hostname for.
+ * @returns {Promise<string>}
+ *          A promise that resolves to the hostname of the tab's URL.
+ */
 async function getHostNameByTabId(tabId) {
   const tab = await browser.tabs.get(tabId);
   const urlObj = new URL(tab.url);
   return urlObj.hostname;
 }
 
-async function loadData(filename, type = null) {
+/**
+ * Loads a file from the extension's directory and parses it based on its type or extension.
+ *
+ * @param {string} filename
+ *        The name or path of the file to load.
+ * @param {string|null} [type=null]
+ *        The expected return type ('blob', or inferred from file extension like 'json' or 'text').
+ * @returns {Promise<string|Object|Blob>}
+ *        A promise that resolves to the file content (text, JSON object, or Blob).
+ */
+async function loadFile(filename, type = null) {
   try {
     const url = browser.runtime.getURL(filename);
     const response = await fetch(url);
@@ -72,14 +70,14 @@ async function loadData(filename, type = null) {
   }
 }
 
-async function getTestAddresses() {
-  return await loadData("data/test-addresses.json");
-}
-
-async function getTestCreditCards() {
-  return await loadData("data/test-credit-cards.json");
-}
-
+/**
+ * Converts a Blob object to an ArrayBuffer.
+ *
+ * @param {Blob} blob
+ *        The Blob object to convert.
+ * @returns {Promise<ArrayBuffer>}
+ *        A promise that resolves to the ArrayBuffer representation of the Blob.
+ */
 function blobToArrayBuffer(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -89,20 +87,41 @@ function blobToArrayBuffer(blob) {
   });
 }
 
+/**
+ * Converts a data URL to a Blob object.
+ *
+ * @param {string} url
+ *        The data URL to convert (e.g., "data:image/png;base64,...").
+ * @returns {Blob}
+ *        A Blob object representing the binary data.
+ */
 function dataURLToBlob(url) {
-  const binary = atob(url.split(",", 2)[1]);
-  let contentType = url.split(",", 1)[0];
-  contentType = contentType.split(";", 1)[0];
-  contentType = contentType.split(":", 2)[1];
+  const binary = atob(url.split(",", 2)[1]); // Decode base64 data
+  let contentType = url.split(",", 1)[0];   // Extract the content type
+  contentType = contentType.split(";", 1)[0].split(":", 2)[1];
 
+  // Default to "image/png" if the content type is not supported
   if (contentType !== "image/png" && contentType !== "image/jpeg") {
     contentType = "image/png";
   }
+
+  // Convert binary string to Uint8Array
   const data = Uint8Array.from(binary, char => char.charCodeAt(0));
-  const blob = new Blob([data], { type: contentType });
-  return blob;
+
+  // Create and return a Blob
+  return new Blob([data], { type: contentType });
 }
 
+/**
+ * Downloads a file using the browser's downloads API.
+ *
+ * @param {string} filename
+ *        The name to save the downloaded file as.
+ * @param {Blob} blob
+ *        The Blob object representing the file content.
+ * @param {boolean} [saveAs=true]
+ *        Whether to prompt the "Save As" dialog.
+ */
 async function download(filename, blob, saveAs = true) {
   // Trigger download with a save-as dialog
   const url = URL.createObjectURL(blob);
@@ -115,196 +134,216 @@ async function download(filename, blob, saveAs = true) {
 }
 
 /**
- * Inspector Panel View Related
- */
-function scrollIntoView(tabId, inspectId, frameId) {
-  browser.scripting.executeScript({
-    target: {
-      tabId,
-      frameIds: [frameId],
-    },
-    func: (inspectId) => {
-      const selector = `[data-moz-autofill-inspect-id="${inspectId}"]`;
-      const element = document.querySelector(selector);
-      if (!element) {
-        return;
-      }
-      const rect = element.getBoundingClientRect();
-      const isInViewport = (
-        rect.top >= 0 &&
-        rect.left >= 0 &&
-        rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
-        rect.right <= (window.innerWidth || document.documentElement.clientWidth)
-      );
-
-      if (!isInViewport) {
-        element.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});
-      }
-    },
-    args: [inspectId]
-  });
-}
-
-async function addHighlightOverlay(tabId, type, fieldDetails) {
-  const frames = await browser.webNavigation.getAllFrames({ tabId });
-  for (const frame of frames) {
-    const inspectIds = fieldDetails
-      .filter(fd => fd.frameId == frame.frameId)
-      .map(fd => fd.inspectId);
-    browser.scripting.executeScript({
-      target: {
-        tabId,
-        frameIds: [frame.frameId],
-      },
-      func: (type, inspectIds) => {
-        inspectIds.forEach(inspectId => {
-          const color = type == 'select' ? 'blue' : 'red';
-          const bgColor = type == 'select' ? 'rgba(0, 0, 255, 0.2)' : 'rgba(255, 0, 0, 0.2)';
-          const zIndex = type == 'select' ? 9999 : 9998;
-
-          const selector = `[data-moz-autofill-inspect-id="${inspectId}"]`;
-          const element = document.querySelector(selector);
-          if (!element) {
-            return;
-          }
-
-          const highlightOverlay = document.createElement("div");
-          highlightOverlay.classList.add("moz-autofill-overlay");
-          highlightOverlay.id = `moz-${type}-highlight-overlay-${inspectId}`;
-          document.body.appendChild(highlightOverlay);
-
-          const BORDER = 2;
-          Object.assign(highlightOverlay.style, {
-            position: "absolute",
-            backgroundColor: `${bgColor}`,
-            border: `${BORDER}px solid ${color}`,
-            zIndex: zIndex,
-            pointerEvents: "none",
-          });
-
-          const rect = element.getBoundingClientRect();
-          highlightOverlay.style.top = rect.top + window.scrollY - BORDER + 'px';
-          highlightOverlay.style.left = rect.left + window.scrollX - BORDER + 'px';
-          highlightOverlay.style.width = rect.width + 'px';
-          highlightOverlay.style.height = rect.height + 'px';
-        });
-      },
-      args: [type, inspectIds]
-    });
-  }
-}
-
-async function removeAllHighlightOverlay(tabId) {
-  const frames = await browser.webNavigation.getAllFrames({ tabId });
-  browser.scripting.executeScript({
-    target: {
-      tabId,
-      frameIds: [...frames.map(frame => frame.frameId)],
-    },
-    func: () => {
-      const overlays = document.querySelectorAll('div.moz-autofill-overlay');
-      overlays.forEach(element => element.remove());
-    }
-  });
-}
-
-async function removeHighlightOverlay(tabId, type, fieldDetails) {
-  const frames = await browser.webNavigation.getAllFrames({ tabId });
-  for (const frame of frames) {
-    const inspectIds = fieldDetails
-      .filter(fd => fd.frameId == frame.frameId)
-      .map(fd => fd.inspectId);
-    browser.scripting.executeScript({
-      target: {
-        tabId,
-        frameIds: [frame.frameId],
-      },
-      func: (type, inspectIds) => {
-        inspectIds.forEach(inspectId => {
-          const overlay = document.getElementById(`moz-${type}-highlight-overlay-${inspectId}`);
-          overlay?.remove();
-        });
-      },
-      args: [type, inspectIds]
-    });
-  }
-}
-
-/**
- * Remove attributes we have set for inspector before saving the page, which includes:
- * - data-moz-autofill-inspect-id
- * - data-moz-autofill-inspector-change
+ * Compresses a list of files into a ZIP archive and triggers a download.
  *
- * We will save additional attribte - `data-moz-autofill-type` so we can use this
- * for ML training
+ * @param {Array<{ filename: string, blob: Blob }>} files
+ *        Array of file objects to include in the ZIP archive.
+ *        Each object must have a `filename` and a `blob` property.
+ * @param {string} host
+ *        The host name to include in the ZIP file's name.
+ * @param {string} prefix
+ *        A prefix to include in the ZIP file's name.
  */
-async function beforeFreeze(tabId, frames, fieldDetails) {
-  const result = [];
-  for (const frame of frames) {
-    const detectFields = fieldDetails
-      .filter(fieldDetail => fieldDetail.frameId == frame.frameId)
-      .map(fieldDetail => [fieldDetail.inspectId, fieldDetail.fieldName]);
-
-    const ret = await browser.scripting.executeScript({
-      target: {
-        tabId,
-        frameIds: [frame.frameId]
-      },
-      func: (detectFields) => {
-        for (const detectField of detectFields) {
-          const selector = `[data-moz-autofill-inspect-id="${detectField[0]}"]`;
-          const element = document.querySelector(selector);
-          element?.setAttribute("data-moz-autofill-type", detectField[1]);
-        }
-        const ret = {};
-        const temporary = `data-moz-autofill-inspector-change`;
-        const elements = document.querySelectorAll(`[${temporary}`);
-        for (const element of elements) {
-          const inspectId = element.getAttribute(`data-moz-autofill-inspect-id`);
-          ret[inspectId] = {};
-
-          let originalAttributes = JSON.parse(element.getAttribute(temporary));
-          for (const [k, v] of Object.entries(originalAttributes)) {
-            ret[inspectId][k] = element.getAttribute(k);
-            element.setAttribute(k, v);
-          }
-          element.removeAttribute(temporary);
-        }
-        return ret;
-      },
-      args: [detectFields]
-    });
-    result.push(ret[0]);
+async function zipAndDownload(files, host, prefix) {
+  const url = browser.runtime.getURL("/libs/jszip.js");
+  await import(url);
+  const zip = JSZip();
+  for (const file of files) {
+    zip.file(file.filename, file.blob);
   }
-  return result;
+  const blob = await zip.generateAsync({ type: "blob" });
+  download(`${prefix}-${host}.zip`, blob);
 }
 
-async function freezePage(tabId, fieldDetails) {
-  const urlToPath = [];
-  const pages = [];
-  let frames = await browser.webNavigation.getAllFrames({ tabId });
-  const mainFrame = frames.find(frame => frame.parentFrameId == -1);
-  const iframes = frames.filter(frame => frame.parentFrameId == mainFrame.frameId);
+class HighlightFeature {
+  /**
+   * Scrolls an element into view.
+   *
+   * @param {number} tabId
+   *        The ID of the tab where the element is in.
+   * @param {Object} fieldDetail
+   *        The details of the field to scroll into view.
+   */
+  static scrollIntoView(tabId, fieldDetail) {
+    const { inspectId, frameId } = fieldDetail;
+    browser.scripting.executeScript({
+      target: {
+        tabId,
+        frameIds: [frameId],
+      },
+      func: (inspectId) => {
+        const selector = `[data-moz-autofill-inspect-id="${inspectId}"]`;
+        const element = document.querySelector(selector);
+        if (!element) {
+          return;
+        }
+        const rect = element.getBoundingClientRect();
+        const isInViewport = (
+          rect.top >= 0 &&
+          rect.left >= 0 &&
+          rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+          rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+        );
 
-  frames = [...iframes, mainFrame];
+        if (!isInViewport) {
+          element.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});
+        }
+      },
+      args: [inspectId]
+    });
+  }
 
-  // We want the store web page containing the original data so
-  // restore attributes we changed before saving the web page.
-  // However, we also want to "restore" the values we set after downloading
-  // it. To do that, we keep what we changed and restore them in the end of
-  // this function.
-  notifyProgress(tabId, "freezing page - storing changed attributes");
-  const changedAttributes = await beforeFreeze(tabId, frames, fieldDetails);
+  /**
+   * Adds highlight overlays to elements.
+   *
+   * @param {number} tabId
+   *        The ID of the tab where the element is in.
+   * @param {string} type
+   *        The type of highlight. Either `select` or `hover`.
+   * @param {Array<Object>} fieldDetails
+   *        An array of field details of elements to highlight.
+   */
+  static async addHighlightOverlay(tabId, type, fieldDetails) {
+    const frames = await browser.webNavigation.getAllFrames({ tabId });
+    for (const frame of frames) {
+      const inspectIds = fieldDetails
+        .filter(fd => fd.frameId == frame.frameId)
+        .map(fd => fd.inspectId);
+      browser.scripting.executeScript({
+        target: {
+          tabId,
+          frameIds: [frame.frameId],
+        },
+        func: (type, inspectIds) => {
+          inspectIds.forEach(inspectId => {
+            const color = type == 'select' ? 'blue' : 'red';
+            const bgColor = type == 'select' ? 'rgba(0, 0, 255, 0.2)' : 'rgba(255, 0, 0, 0.2)';
+            const zIndex = type == 'select' ? 9999 : 9998;
 
-  for (let idx = 0; idx < frames.length; idx++) {
-    const frame = frames[idx];
+            const selector = `[data-moz-autofill-inspect-id="${inspectId}"]`;
+            const element = document.querySelector(selector);
+            if (!element) {
+              return;
+            }
 
-    notifyProgress(tabId, `freezing frame (${idx+1}/${frames.length}) - ${frame.url}`);
-    if (frame.url.startsWith("about:")) {
-      continue;
+            const highlightOverlay = document.createElement("div");
+            highlightOverlay.classList.add("moz-autofill-overlay");
+            highlightOverlay.id = `moz-${type}-highlight-overlay-${inspectId}`;
+            document.body.appendChild(highlightOverlay);
+
+            const BORDER = 2;
+            Object.assign(highlightOverlay.style, {
+              position: "absolute",
+              backgroundColor: `${bgColor}`,
+              border: `${BORDER}px solid ${color}`,
+              zIndex: zIndex,
+              pointerEvents: "none",
+            });
+
+            const rect = element.getBoundingClientRect();
+            highlightOverlay.style.top = rect.top + window.scrollY - BORDER + 'px';
+            highlightOverlay.style.left = rect.left + window.scrollX - BORDER + 'px';
+            highlightOverlay.style.width = rect.width + 'px';
+            highlightOverlay.style.height = rect.height + 'px';
+          });
+        },
+        args: [type, inspectIds]
+      });
     }
+  }
 
-    const promise = new Promise((resolve) => {
+  /**
+   * Removes all highlights in the given tab.
+   *
+   * @param {number} tabId
+   *        The ID of the tab to remove highlight from.
+   */
+  static async removeAllHighlightOverlay(tabId) {
+    const frames = await browser.webNavigation.getAllFrames({ tabId });
+    browser.scripting.executeScript({
+      target: {
+        tabId,
+        frameIds: [...frames.map(frame => frame.frameId)],
+      },
+      func: () => {
+        document.querySelectorAll('div.moz-autofill-overlay').forEach(element =>
+          element.remove()
+        );
+      }
+    });
+  }
+
+  /**
+   * Removes highlight overlays from elements.
+   *
+   * @param {number} tabId
+   *        The ID of the tab where the element is in.
+   * @param {string} type
+   *        The type of highlight. Either `select` or `hover`.
+   * @param {Array<Object>} fieldDetails
+   *        An array of field details of elements to highlight.
+   */
+  static async removeHighlightOverlay(tabId, type, fieldDetails) {
+    const frames = await browser.webNavigation.getAllFrames({ tabId });
+    for (const frame of frames) {
+      const inspectIds = fieldDetails
+        .filter(fd => fd.frameId == frame.frameId)
+        .map(fd => fd.inspectId);
+      browser.scripting.executeScript({
+        target: {
+          tabId,
+          frameIds: [frame.frameId],
+        },
+        func: (type, inspectIds) => {
+          inspectIds.forEach(inspectId => {
+            const overlay = document.getElementById(`moz-${type}-highlight-overlay-${inspectId}`);
+            overlay?.remove();
+          });
+        },
+        args: [type, inspectIds]
+      });
+    }
+  }
+}
+
+class DownloadPageFeature {
+  /**
+   * Remove attributes we have set for inspector before saving the page, which includes:
+   * - data-moz-autofill-inspect-id
+   * - data-moz-autofill-inspector-change
+   *
+   * We will save additional attribte - `data-moz-autofill-type` so we can use this
+   * for ML training
+   */
+  static async beforeFreeze(tabId, fieldDetails) {
+    const frames = await browser.webNavigation.getAllFrames({ tabId });
+    for (const frame of frames) {
+      const inspectedFields = fieldDetails
+        .filter(fd => fd.frameId == frame.frameId)
+        .map(fd => [fd.inspectId, fd.fieldName]);
+      if (!inspectedFields.length) {
+        continue;
+      }
+
+      await browser.scripting.executeScript({
+        target: {
+          tabId,
+          frameIds: [frame.frameId]
+        },
+        func: (inspectedFields) => {
+          for (const [inspectId, fieldName] of inspectedFields) {
+            const selector = `[data-moz-autofill-inspect-id="${inspectId}"]`;
+            const element = document.querySelector(selector);
+            element?.setAttribute("data-moz-autofill-type", fieldName);
+          }
+        },
+        args: [inspectedFields]
+      });
+    }
+  }
+
+  static async runFreeze(tabId, frame) {
+    const freezePromise = new Promise((resolve) => {
       function waitForFreeze(request) {
         if (request.msg === "content-freeze-complete") {
           resolve(request.html);
@@ -315,434 +354,471 @@ async function freezePage(tabId, fieldDetails) {
     });
 
     browser.scripting.executeScript({
-      target: {
-        tabId,
-        frameIds: [frame.frameId],
-      },
+      target: { tabId, frameIds: [frame.frameId] },
       files: ["/content/content-script.js"],
     }).then(() => {
       browser.tabs.sendMessage(tabId, { message: "content-freeze-page" }, { frameId: frame.frameId });
-    }).catch((error) => {
-      notifyProgress(tabId, `Error freezing frame (${idx+1}/${frames.length}) - ${frame.url} : ${error}`);
-      return;
     });
-    let html = await promise;
 
-    let filename;
-    if (idx == frames.length - 1) {
-      filename = `${new URL(frame.url).host}.html`;
-      for (let [url, path] of urlToPath) {
-        url = url.replace(/&/g, "&amp;");
-        // Replace iframe src=url to point to local file
-        const regexURL = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        console.log("[DImi]regexURL = " + regexURL);
-
-        // TODO: Need to update this regexp
-        let regex = new RegExp(`<iframe\\s+[^>]*src=["'](${regexURL})["']`, 'i');
-        console.log("[DImi]findal regex = " + regex.toString());
-        if (html.match(regex)) {
-          console.log("ok..can find with regex");
-        } else {
-          console.log("ok..canNOT find with regex");
-        }
-        if (html.includes(url)) {
-          console.log("ok..can find with include");
-        } else {
-          console.log("ok..canNOT find with include");
-        }
-        //html = html.replace(regex, `<iframe src="${path}"`);
-        html = html.replace(regex, (match, capturedURL) => {
-          console.log("Full Match:", match);
-          console.log("Captured URL:", capturedURL); 
-          return match.replace(capturedURL, path)
-        });
-      }
-
-      // Add `self` to frame-src  Content Script PolicyEnsure to ensure we can load
-      // iframe with local file
-      html = html.replace(`frame-src`, `frame-src 'self'`);
-
-      // Remove attributes that are used by inspector
-      const regex = /data-moz-autofill-inspect-id="\{[^}]*\}"/g;
-      html = html.replace(regex, '');
-    } else {
-      console.log("Set URL " + frame.url);
-      filename = `${new URL(frame.url).host}/${idx}.html`;
-      urlToPath.push([frame.url, filename]);
-      //continue;
-    }
-    pages.push({
-      filename,
-      blob: new Blob([html], { type: 'text/html' }),
-    })
+    return await freezePromise;
   }
 
-  notifyProgress(tabId, "freezing page - restoring changed attributes");
-  for (const { frameId, result } of changedAttributes) {
-    for (const [inspectId, attributes] of Object.entries(result)) {
-      for (const [k, v] of Object.entries(attributes)) {
-        await changeFieldAttribute(tabId, inspectId, frameId, k, v);
+  static postProcessingMainFrameHTML(html, urlToPath) {
+    for (let [url, path] of urlToPath) {
+      url = url.replace(/&/g, "&amp;");
+      // Replace iframe src=url to point to local file
+      const regexURL = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      console.log("[DImi]regexURL = " + regexURL);
+
+      // TODO: Need to update this regexp
+      let regex = new RegExp(`<iframe\\s+[^>]*src=["'](${regexURL})["']`, 'i');
+      console.log("[DImi]findal regex = " + regex.toString());
+      if (html.match(regex)) {
+        console.log("ok..can find with regex");
+      } else {
+        console.log("ok..canNOT find with regex");
       }
-    }
-  }
-
-  return pages;
-}
-
-async function generateTest(host, fieldDetails) {
-  const inspectResult = fieldDetailsToTestExpectedResult(fieldDetails);
-  const filename = `test/${host}.json`;
-  const text = JSON.stringify(inspectResult, null, 2);
-  return { filename, blob: text };
-}
-
-async function screenshotPage(tabId) {
-  const [{result}] = await browser.scripting.executeScript({
-    target: { tabId },
-    func: () => ({
-      width: document.documentElement.scrollWidth,
-      height: document.documentElement.scrollHeight,
-    }),
-  });
-
-  const dataUrl =
-    await browser.experiments.autofill.captureTab(tabId, 0, 0, result.width, result.height);
-  return dataURLToBlob(dataUrl);
-}
-
-async function changeFieldAttribute(tabId, inspectId, frameId, attribute, newValue) {
-  await browser.scripting.executeScript({
-    target: {
-      tabId,
-      frameIds: [frameId],
-    },
-    func: (inspectId, attribute, newValue) => {
-      const selector = `[data-moz-autofill-inspect-id="${inspectId}"]`;
-      const element = document.querySelector(selector);
-      if (!element) {
-        return;
+      if (html.includes(url)) {
+        console.log("ok..can find with include");
+      } else {
+        console.log("ok..canNOT find with include");
       }
-      const temporary = `data-moz-autofill-inspector-change`;
-      // Keep the original attribute in a temporary data-attribute
-      let originalAttributes = element.getAttribute(temporary);
-      originalAttributes = JSON.parse(originalAttributes) ?? {};
-
-      // If attribute exists, it means we have already changed this attribute.
-      // Do not overwrite its original value
-      if (!originalAttributes.hasOwnProperty(attribute)) {
-        originalAttributes[attribute] = element.getAttribute(attribute);
-        element.setAttribute(temporary, JSON.stringify(originalAttributes));
-      }
-
-      // Update the attribute
-      // TODO: If newVAUE IS NULL, THEN WE SHOULD REMOVE THE ATTRIBUTE
-      element.setAttribute(attribute, newValue)
-    },
-    args: [inspectId, attribute, newValue]
-  });
-}
-
-const WEB_PAGE = 0x01;
-const GECKO_TEST = 0x02;
-const PAGE_SCREENSHOT = 0x04;
-const INSPECT_EXPORT = 0x08;
-
-async function createReport(tabId, type, { zip = true, panelDataUrl = null, saveAs = true, fieldDetails = null}) {
-  const host = await getHostNameByTabId(tabId);
-
-  const files = [];
-  if (type & WEB_PAGE) {
-    notifyProgress(tabId, "freezing page");
-    const pages = await freezePage(tabId, fieldDetails);
-    if (zip) {
-      pages.forEach(page => {
-        page.filename = `page/${page.filename}`;
+      html = html.replace(regex, (match, capturedURL) => {
+        console.log("Full Match:", match);
+        console.log("Captured URL:", capturedURL); 
+        return match.replace(capturedURL, path)
       });
     }
-    files.push(...pages);
+
+    // Add `self` to frame-src  Content Script PolicyEnsure to ensure we can load
+    // iframe with local file
+    html = html.replace(`frame-src`, `frame-src 'self'`);
+
+    // Remove attributes that are used by inspector
+    const regex = /data-moz-autofill-inspect-id="\{[^}]*\}"/g;
+    html = html.replace(regex, '');
+    return html;
   }
 
-  if (type & GECKO_TEST) {
-    notifyProgress(tabId, "generating test");
-    const testcase = await generateTest(host, fieldDetails);
-    files.push(testcase);
+  static async freezePage(tabId, fieldDetails) {
+    let frames = await browser.webNavigation.getAllFrames({ tabId });
+    const mainFrame = frames.find(frame => frame.parentFrameId == -1);
+    const iframes = frames.filter(frame =>
+      frame.parentFrameId == mainFrame.frameId &&
+      !frame.url.startsWith("about:")
+    );
 
-    const blob = await loadData("data/gen-test.py", "blob");
-    files.push({
-      filename: `gen-test.py`,
-      blob
+    // Put the main-frame to the last one because we want to freeze the sub-frames first.
+    frames = [...iframes, mainFrame];
+
+    notifyProgress(tabId, "freezing page - setting data attributes");
+    await DownloadPageFeature.beforeFreeze(tabId, fieldDetails);
+
+    const pages = [];
+    const urlToPath = [];
+    for (let idx = 0; idx < frames.length; idx++) {
+      const frame = frames[idx];
+      notifyProgress(tabId, `freezing frame (${idx+1}/${frames.length}) - ${frame.url}`);
+      let html;
+      try {
+        html = await DownloadPageFeature.runFreeze(tabId, frame);
+      } catch (error) {
+        notifyProgress(tabId, `Error freezing frame (${idx+1}/${frames.length}) - ${frame.url} : ${error}`);
+      }
+
+      let filename;
+      if (idx != frames.length - 1) {
+        console.log("Set URL " + frame.url);
+        filename = `${new URL(frame.url).host}/${idx}.html`;
+        urlToPath.push([frame.url, filename]);
+      } else {
+        filename = `${new URL(frame.url).host}.html`;
+        html = DownloadPageFeature.postProcessingMainFrameHTML(html, urlToPath);
+      }
+      pages.push({
+        filename,
+        blob: new Blob([html], { type: 'text/html' }),
+      })
+    }
+
+    return pages;
+  }
+
+  static async screenshot(tabId) {
+    notifyProgress(tabId, "screenshoting page");
+
+    const host = await getHostNameByTabId(tabId);
+
+    const [{ result }] = await browser.scripting.executeScript({
+      target: { tabId },
+      func: () => ({
+        width: document.documentElement.scrollWidth,
+        height: document.documentElement.scrollHeight,
+      }),
     });
-  }
 
-  if (type & PAGE_SCREENSHOT) {
-    notifyProgress(tabId, "screenshotting page");
-    const blob = await screenshotPage(tabId);
-    files.push({
+    const dataUrl =
+      await browser.experiments.autofill.captureTab(tabId, 0, 0, result.width, result.height);
+    return {
       filename: `screenshot-${host}.png`,
-      blob,
-    });
+      blob: dataURLToBlob(dataUrl)
+    };
   }
 
-  if (type & INSPECT_EXPORT) {
+  static async exportInspect(tabId, panelDataUrl) {
+    notifyProgress(tabId, "exporting inspect result");
+
+    const host = await getHostNameByTabId(tabId);
+    return {
+      filename: `inspect-${host}.png`,
+      blob: dataURLToBlob(panelDataUrl)
+    };
+  }
+}
+
+class GenerateTestFeature {
+  static fieldDetailsToTestExpectedResult(fieldDetails) {
+    let expectedSection;
+    const sections = [];
+    let formIndex;
+    let sectionIndex;
+    for (const fieldDetail of fieldDetails) {
+      if (!fieldDetail.fieldName || (!fieldDetail.isVisible && fieldDetail.localName == "input")) {
+        continue;
+      }
+
+      if (fieldDetail.formIndex != formIndex ||
+          fieldDetail.sectionIndex != sectionIndex) {
+        formIndex = fieldDetail.formIndex;
+        sectionIndex = fieldDetail.sectionIndex;
+
+        expectedSection = {
+          fields: [],
+        };
+        sections.push(expectedSection);
+      }
+      let expectedField = {
+        fieldName: fieldDetail.fieldName,
+        reason: fieldDetail.reason,
+      };
+      if (fieldDetail.part) {
+        expectedField.part = fieldDetail.part;
+      }
+      expectedSection.fields.push(expectedField);
+    }
+    return sections;
+  }
+
+  static async create(host, fieldDetails) {
+    const inspectResult = GenerateTestFeature.fieldDetailsToTestExpectedResult(fieldDetails);
+    const filename = `${host}.json`;
+    const text = JSON.stringify(inspectResult, null, 2);
+
+    const scriptBlob = await loadFile("data/gen-test.py", "blob");
+    return [
+      { filename, blob: text },
+      { filename: `gen-test.py` , blob: scriptBlob }
+    ];
+  }
+}
+
+class ReportIssueFeature {
+  static BUGZILLA_NEW_BUG_URL =
+    "https://bugzilla.mozilla.org/enter_bug.cgi?product=Toolkit&component=Form+Autofill";
+
+  static async uploadAttachmentToBugzilla(tabId, filename, type, panelDataUrl) {
     notifyProgress(tabId, "exporting inspect result");
     const blob = dataURLToBlob(panelDataUrl);
-    files.push({
-      filename: `inspect-${host}.png`,
-      blob,
+    const arrayBuffer = await blobToArrayBuffer(blob);
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+
+    notifyProgress(tabId, "uploading file");
+    await browser.scripting.executeScript({
+      target: {
+        tabId,
+      },
+      func: (filename, type, base64) => {
+        const file = document.getElementById("att-file");
+        if (!file) {
+          return;
+        }
+
+        const binaryString = atob(base64);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        const zipBlob = new Blob([bytes], { type });
+        const testFile= new File([zipBlob], filename, { type });
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(testFile);
+
+        // Assign the files to the input
+        file.files = dataTransfer.files;
+        const event = new Event("change", { bubbles: true });
+        file.dispatchEvent(event);
+      },
+      args: [filename, type, base64]
     });
   }
 
-  if (zip) {
-    notifyProgress(tabId, "compressing files");
-    const url = browser.runtime.getURL("/libs/jszip.js");
-    await import(url);
-    const zip = JSZip();
-    for (const file of files) {
-      zip.file(file.filename, file.blob);
-    }
-    const prefix = type == WEB_PAGE ? "page" : "report";
-    const blob = await zip.generateAsync({ type: "blob" });
-      download(`${prefix}-${host}.zip`, blob, saveAs);
-  } else {
-    for (const file of files) {
-      download(file.filename, file.blob, saveAs);
+  static async reportToBugzilla(tabId, attachmentDataUrl, changes) {
+    notifyProgress(tabId, "opening bugzilla");
+    const host = await getHostNameByTabId(tabId);
+
+    browser.tabs.create({url: ReportIssueFeature.BUGZILLA_NEW_BUG_URL}, (tab) => {
+      browser.tabs.onUpdated.addListener(async function listener(tabId, changeInfo) {
+        if (tabId != tab.id) {
+          return;
+        }
+
+        if (changeInfo.status != "complete") {
+          return;
+        }
+
+        browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            // Function to create and show the dialog
+            function showDialog(message) {
+              // Create a dialog element
+              const dialog = document.createElement('dialog');
+              dialog.id = 'moz-autofill-inspector-dialog';
+              dialog.style.width = '300px';
+              dialog.style.padding = '20px';
+              dialog.style.border = '1px solid #ccc';
+              dialog.style.borderRadius = '8px';
+              dialog.style.boxShadow = '0px 4px 8px rgba(0, 0, 0, 0.2)';
+              dialog.style.fontFamily = 'Arial, sans-serif';
+              dialog.style.textAlign = 'center';
+              dialog.style.zIndex = '9999';
+
+              // Add a message
+              const statusMessage = document.createElement('p');
+              statusMessage.id = 'dialog-status-message';
+              statusMessage.textContent = message;
+              dialog.appendChild(statusMessage);
+
+              // Add the dialog to the document
+              document.body.appendChild(dialog);
+
+              // Show the dialog
+              dialog.showModal();
+              dialog.offsetHeight;
+
+              return dialog; // Return the dialog element for later use
+            }
+
+            showDialog("Filling Information for you...");
+          },
+        });
+
+        browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (host, changes) => {
+            const short_description = document.getElementById("short_desc");
+            if (short_description) {
+              const names = changes.map(c => c.fieldName);
+              let description;
+              if (names.length == 0) {
+                description = '';
+              } else if (names.length == 1) {
+                description = `on ${names[0]} Field`;
+              } else if (names.length == 2) {
+                description = `on ${names[0]} and ${names[1]} Fields`;
+              } else {
+                const last = names[names.length - 1];
+                const others = names.slice(0, -1).join(', ');
+                description = `on ${others}, and ${last} Fields`;
+              }
+              short_description.value =
+                `[${host}]Autofill doesn't work ${description}`;
+            }
+            const URL = document.getElementById("bug_file_loc");
+            if (URL) {
+              URL.value = `https://${host}`;
+            }
+            const attachFile = document.getElementById("attach-new-file");
+            if (attachFile) {
+              attachFile.click();
+            }
+          },
+          args: [host, changes]
+        });
+
+        ReportIssueFeature.uploadAttachmentToBugzilla(tab.id, "inspect.png", "image/png", attachmentDataUrl);
+
+        browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            const dialog = document.getElementById('moz-autofill-inspector-dialog');
+            dialog?.close();
+            dialog?.remove();
+          },
+        });
+
+        // Remove the listener after injection
+        browser.tabs.onUpdated.removeListener(listener);
+      });
+    });
+  }
+}
+
+class AutofillFeature {
+  /**
+   * Loads the test addresses from a JSON file.
+   *
+   * @returns {Promise<Object[]>}
+   *          A promise that resolves to an array of test addresses.
+   */
+  static async getTestAddresses() {
+    return await loadFile("data/test-addresses.json");
+  }
+
+  /**
+   * Loads the test credit cards from a JSON file.
+   *
+   * @returns {Promise<Object[]>}
+   *           A promise that resolves to an array of test credit cards.
+   */
+  static async getTestCreditCards() {
+    return await loadFile("data/test-credit-cards.json");
+  }
+
+  /**
+   * Executes an autofill inspection on a specific tab and sends the result via a message.
+   *
+   * @param {number} tabId
+   *        The ID of the tab to inspect.
+   * @param {Object} changes
+   *        The changes to apply during inspection.
+   */
+  static async inspect(tabId, changes) {
+    try {
+      const result = await browser.experiments.autofill.inspect(tabId, changes);
+      await browser.runtime.sendMessage({
+        msg: 'inspect-complete',
+        tabId,
+        data: result,
+      });
+    } catch (error) {
+      console.warn("Failed to send inspect-complete message:", error);
     }
   }
-  notifyProgress(tabId, "done");
+
+  /**
+   * Sets test records (addresses and/or credit cards) in a specific tab.
+   *
+   * @param {number} tabId
+   *        The ID of the tab to set the test records in.
+   * @param {boolean} address
+   *        Whether to include test addresses.
+   * @param {boolean} creditcard
+   *        Whether to include test credit cards.
+   */
+  static async setTestRecords(tabId, address, creditcard) {
+    const records = [];
+
+    if (address) {
+      const addresses = await AutofillFeature.getTestAddresses();
+      records.push(...addresses);
+    }
+
+    if (creditcard) {
+      const creditcards = await AutofillFeature.getTestCreditCards();
+      records.push(...creditcards);
+    }
+
+    try {
+      await browser.experiments.autofill.setTestRecords(tabId, records);
+    } catch (error) {
+      console.error("Failed to set test records:", error);
+    }
+  }
 }
 
-async function uploadAttachmentToBugzilla(tabId, filename, type, panelDataUrl) {
-  notifyProgress(tabId, "exporting inspect result");
-  const blob = dataURLToBlob(panelDataUrl);
-  const arrayBuffer = await blobToArrayBuffer(blob);
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-
-  notifyProgress(tabId, "uploading file");
-  await browser.scripting.executeScript({
-    target: {
-      tabId,
-    },
-    func: (filename, type, base64) => {
-      const file = document.getElementById("att-file");
-      if (!file) {
-        return;
-      }
-
-      const binaryString = atob(base64);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      const zipBlob = new Blob([bytes], { type });
-      const testFile= new File([zipBlob], filename, { type });
-      const dataTransfer = new DataTransfer();
-      dataTransfer.items.add(testFile);
-
-      // Assign the files to the input
-      file.files = dataTransfer.files;
-      const event = new Event("change", { bubbles: true });
-      file.dispatchEvent(event);
-    },
-    args: [filename, type, base64]
-  });
-
-}
-/**
- * When we receive the message, execute the given script in the given tab.
- */
-async function handleMessage(request, sender, sendResponse) {
+async function handleMessage(request) {
   const tabId = request.tabId;
   if (!tabId) {
     return;
   }
+
   switch (request.msg) {
     // Run autofill fields inspection
     case "inspect": {
       const { changes } = request;
-      await removeAllHighlightOverlay(tabId);
-      const result = await browser.experiments.autofill.inspect(tabId, changes);
-      browser.runtime.sendMessage({
-        msg: 'inspect-complete',
-        tabId,
-        data: result
-      }).catch(() => {});
+      HighlightFeature.removeAllHighlightOverlay(tabId);
+      AutofillFeature.inspect(tabId, changes);
       break;
     }
-    // Download the page mark
-    case "freeze": {
+    // Download the page markup
+    case "download-page": {
       const { fieldDetails } = request;
-      createReport(tabId, WEB_PAGE, { zip: true, fieldDetails });
+      const host = await getHostNameByTabId(tabId);
+
+      const pages = await DownloadPageFeature.freezePage(tabId, fieldDetails);
+      zipAndDownload(pages, host, "page");
       break;
     }
     // Generate a report with everything
     case "generate-report": {
-      const { panelDataUrl, saveAs, fieldDetails } = request;
-      createReport(
-        tabId,
-        PAGE_SCREENSHOT | WEB_PAGE | GECKO_TEST | INSPECT_EXPORT,
-        { zip: true, panelDataUrl, fieldDetails: fieldDetails }
-      );
+      const { panelDataUrl, fieldDetails } = request;
+      const host = await getHostNameByTabId(tabId);
+
+      const screenshot = await DownloadPageFeature.screenshot(tabId);
+      const inspect = await DownloadPageFeature.exportInspect(tabId, panelDataUrl);
+      const pages = await DownloadPageFeature.freezePage(tabId, fieldDetails);
+      pages.forEach(page => page.filename = `page/${page.filename}`);
+
+      const tests = await GenerateTestFeature.create(host, fieldDetails);
+      tests.forEach(test => test.filename = `test/${test.filename}`);
+      zipAndDownload([screenshot, inspect, ...pages, ...tests], host, "report");
       break;
     }
     case "export-inspect": {
       // Screenshot the tab and Sceenshot the autofill inspect panel
-      const { panelDataUrl, saveAs } = request;
-      createReport(tabId, PAGE_SCREENSHOT | INSPECT_EXPORT, { zip: false, panelDataUrl, saveAs });
+      const { panelDataUrl } = request;
+
+      const files = await Promise.all([
+        DownloadPageFeature.screenshot(tabId),
+        DownloadPageFeature.exportInspect(tabId, panelDataUrl),
+      ]);
+      files.forEach(file => download(file.filename, file.blob, false));
       break;
     }
     // File a Site Compatibility Bug Report
     case "report-issue": {
-      const { panelDataUrl, changes } = request;
-      const host = await getHostNameByTabId(tabId);
-
-      notifyProgress(tabId, "opening bugzilla");
-      browser.tabs.create({url: BUGZILLA_NEW_BUG_URL}, (tab) => {
-        browser.tabs.onUpdated.addListener(async function listener(tabId, changeInfo) {
-          if (tabId != tab.id) {
-            return;
-          }
-
-          if (changeInfo.status != "complete") {
-            return;
-          }
-
-          browser.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => {
-              // Function to create and show the dialog
-              function showDialog(message) {
-                // Create a dialog element
-                const dialog = document.createElement('dialog');
-                dialog.id = 'moz-autofill-inspector-dialog';
-                dialog.style.width = '300px';
-                dialog.style.padding = '20px';
-                dialog.style.border = '1px solid #ccc';
-                dialog.style.borderRadius = '8px';
-                dialog.style.boxShadow = '0px 4px 8px rgba(0, 0, 0, 0.2)';
-                dialog.style.fontFamily = 'Arial, sans-serif';
-                dialog.style.textAlign = 'center';
-                dialog.style.zIndex = '9999';
-
-                // Add a message
-                const statusMessage = document.createElement('p');
-                statusMessage.id = 'dialog-status-message';
-                statusMessage.textContent = message;
-                dialog.appendChild(statusMessage);
-
-                // Add the dialog to the document
-                document.body.appendChild(dialog);
-
-                // Show the dialog
-                dialog.showModal();
-                dialog.offsetHeight;
-
-                return dialog; // Return the dialog element for later use
-              }
-
-              function updateDialogText(dialog, newMessage) {
-                const statusMessage = dialog.querySelector('#dialog-status-message');
-                if (statusMessage) {
-                  statusMessage.textContent = newMessage;
-                }
-              }
-
-              showDialog("Filling Information for you...");
-            },
-          });
-
-          browser.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: (host, changes) => {
-              const short_description = document.getElementById("short_desc");
-              if (short_description) {
-                const names = changes.map(c => c.fieldName);
-                let description;
-                if (names.length == 0) {
-                  description = '';
-                } else if (names.length == 1) {
-                  description = `on ${names[0]} Field`;
-                } else if (names.length == 2) {
-                  description = `on ${names[0]} and ${names[1]} Fields`;
-                } else {
-                  const last = names[names.length - 1];
-                  const others = names.slice(0, -1).join(', ');
-                  description = `on ${others}, and ${last} Fields`;
-                }
-                short_description.value =
-                  `[${host}]Autofill doesn't work ${description}`;
-              }
-              const URL = document.getElementById("bug_file_loc");
-              if (URL) {
-                URL.value = `https://${host}`;
-              }
-              const attachFile = document.getElementById("attach-new-file");
-              if (attachFile) {
-                attachFile.click();
-              }
-            },
-            args: [host, changes]
-          });
-
-          uploadAttachmentToBugzilla(tab.id, "inspect.png", "image/png", panelDataUrl);
-
-          browser.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => {
-              const dialog = document.getElementById('moz-autofill-inspector-dialog');
-              dialog?.close();
-              dialog?.remove();
-            },
-          });
-
-          // Remove the listener after injection
-          browser.tabs.onUpdated.removeListener(listener);
-        });
-      });
+      const { attachmentDataUrl, changes } = request;
+      ReportIssueFeature.reportToBugzilla(tabId, attachmentDataUrl, changes);
       break;
     }
-    //case "change-field-attribute": {
-      //const { inspectId, frameId, attribute, value } = request;
-      //changeFieldAttribute(tabId, inspectId, frameId, attribute, value);
-      //break;
-    //}
     // Add Test Records to show in the autocomplete dropdown
     case "set-test-records": {
       const { address, creditcard } = request;
-      const records = [];
-      if (address) {
-        const addresses = await getTestAddresses();
-        records.push(...addresses);
-      };
-
-      if (creditcard) {
-        const creditcards = await getTestCreditCards();
-        records.push(...creditcards);
-      }
-
-      browser.experiments.autofill.setTestRecords(tabId, records);
+      AutofillFeature.setTestRecords(tabId, address, creditcard);
       break;
     }
     /**
      * Autofill Inspector Panel Commands
      */
     case "hide": {
-      await removeAllHighlightOverlay(tabId);
+      HighlightFeature.removeAllHighlightOverlay(tabId);
       break;
     }
     case "scroll": {
-      const { inspectId, frameId } = request;
-      scrollIntoView(tabId, inspectId, frameId);
+      const { fieldDetail } = request;
+      HighlightFeature.scrollIntoView(tabId, fieldDetail);
       break;
     }
     case "highlight": {
       const { type, fieldDetails } = request;
-      addHighlightOverlay(tabId, type, fieldDetails);
+      HighlightFeature.addHighlightOverlay(tabId, type, fieldDetails);
       break;
     }
     case "highlight-remove": {
       const { type, fieldDetails } = request;
-      removeHighlightOverlay(tabId, type, fieldDetails);
+      HighlightFeature.removeHighlightOverlay(tabId, type, fieldDetails);
       break;
     }
   }
@@ -750,5 +826,5 @@ async function handleMessage(request, sender, sendResponse) {
 
 /**
  * Listen for messages from our devtools panel.
- * */
+ */
 browser.runtime.onMessage.addListener(handleMessage);

@@ -1,7 +1,10 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-//import freezeDry from './libs/freeze-dry.es.js'
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+"use strict";
+
+/* global browser html2canvas */
 
 const CREDIT_CARD_TYPES = [
   "cc-name",
@@ -44,7 +47,19 @@ const ADDRESS_TYPES = [
   "tel-extension",
 ];
 
-// Utils
+// Utility Functions
+/**
+ * Finds the next index in an array that satisfies a given condition.
+ *
+ * @param {Array} array
+ *        The array to search through.
+ * @param {Integer} currentIndex
+ *        The current index to start searching from.
+ * @param {Function} condition
+ *        A callback function to find the element.
+ * @returns {Integer}
+ *        The index of the next element that satisfies the condition, or the array length if none is found.
+ */
 function findNextIndex(array, currentIndex, condition) {
   for (let i = currentIndex + 1; i < array.length; i++) {
     if (condition(array[i])) {
@@ -54,22 +69,112 @@ function findNextIndex(array, currentIndex, condition) {
   return array.length;
 }
 
-function findTdInSameRowById(targetTd, id) {
-  const parentRow = targetTd.closest('tr');
-  if (!parentRow) {
-    return null;
-  }
+/**
+ * Finds a `td` element in the same row as a given `td`, identified by its ID.
+ *
+ * @param {HTMLTableCellElement} td
+ *        The reference table cell element.
+ * @param {string} id
+ *        The ID of the target `td` element to find.
+ * @returns {HTMLTableCellElement|null}
+ *       The found `td` element, or `null` if not found.
+ */
+function findTdInSameRowById(td, id) {
+  return td.closest('tr')?.querySelector(`td#${id}`);
+}
 
-  const targetTdById = parentRow.querySelector(`td#${id}`);
-  return targetTdById;
+/**
+ * Retrieves all rows spanned by a given `td` element, based on its `rowSpan` attribute.
+ *
+ * @param {HTMLTableCellElement} td
+ *        The reference table cell element.
+ * @returns {HTMLTableRowElement[]}
+ *        An array of rows spanned by the `td` element.
+ */
+function getSpannedRows(td) {
+  const rowSpan = td.rowSpan;
+  const currentRow = td.parentElement;
+  const table = currentRow.parentElement;
+
+  const rowIndex = Array.from(table.children).indexOf(currentRow);
+
+  const spannedRows = [];
+  for (let i = 0; i < rowSpan; i++) {
+    const nextRow = table.children[rowIndex + i];
+    if (nextRow) {
+        spannedRows.push(nextRow);
+    }
+  }
+  return spannedRows;
+}
+
+/**
+ * Sends a message to the background script, including the current inspected tab's ID.
+ *
+ * @param {string} msg 
+ *        The message type or identifier.
+ * @param {Object} request
+ *        Additional data to send along with the message.
+ */
+function sendMessage(msg, request) {
+  browser.runtime.sendMessage({
+    msg,
+    tabId: browser.devtools.inspectedWindow.tabId,
+    ...request,
+  });
 }
 
 class AutofillInspector {
-  #changes = new Map();
+  /**
+   * Map that stores field names manually updated by their inspection IDs.
+   * Key: inspection ID (string)
+   * Value: updated field name (string)
+   */
+  #updateFieldNameByInspectId = new Map();
 
+  /**
+   * Array contains the list of all inspected elements. This value
+   * is set after calling `inspect` experiment API.
+   */
   #inspectedFieldDetails = null;
 
+  /**
+   * Map that maintains a mapping between table row (`<tr>`) elements
+   * and their corresponding field details.
+   */
   #rowToFieldDetail = new Map();
+
+  #buttonClickHandlers = [
+    ["autofill-inspect-start-button", () => this.onInspect()],
+    ["autofill-inspect-element-button", () => this.onInspectElement()],
+    ["autofill-screenshot-button", () => this.onScreenshot()],
+    ["autofill-download-button", () => this.onDownloadPage()],
+    ["autofill-report-button", () => this.onReportIssue()],
+    ["autofill-edit-field-button", () => this.onEditFields()],
+    ["autofill-generate-test-button", () => this.onGenerateReport()],
+  ]
+
+  #checkboxChangeHandlers = [
+    ["autofill-show-invisible-button", () => this.onFilterFields()],
+    ["autofill-show-unknown-button", () => this.onFilterFields()],
+    ["autofill-add-address-button", () => this.onAddOrRemoveTestRecord()],
+    ["autofill-add-credit-card-button", () => this.onAddOrRemoveTestRecord()],
+  ]
+
+  /**
+   * Array of <th> configuration of the header of inspect result table.
+   */
+  #tableHeaders = [
+    {id: "col-form", text: "Form"},
+    {id: "col-section", text: "Section"},
+    {id: "col-frame", text: "Frame"},
+    {id: "col-fieldName", text: "FieldName"},
+    {id: "col-reason", text: "Reason"},
+    {id: "col-identifier", text: "Id/Name"},
+    {id: "col-isVisible", text: "Visible"},
+    {id: "col-part", text: "Part"},
+    {id: "col-confidence", text: "Confidence"},
+  ];
 
   constructor() {
     document.addEventListener("DOMContentLoaded", () => this.init(), { once: true });
@@ -77,14 +182,35 @@ class AutofillInspector {
     browser.runtime.onMessage.addListener(request => this.onMessage(request));
   }
 
-  sendMessage(msg, request) {
-    browser.runtime.sendMessage({
-      msg,
-      tabId: browser.devtools.inspectedWindow.tabId,
-      ...request,
-    });
+  init() {
+    // Helper to attach event listeners
+    const addEventListeners = (handlers, eventType) => {
+      for (const [id, handler] of handlers) {
+        const element = document.getElementById(id);
+        element.addEventListener(eventType, event => handler(event));
+      }
+    };
+
+    // Setup toolbar button and checkbox change handlers
+    addEventListeners(this.#buttonClickHandlers, "click");
+    addEventListeners(this.#checkboxChangeHandlers, "change");
+
+    // Setup inspect result table
+    const headerRow = document.getElementById("form-analysis-head-row");
+    headerRow.append(
+      ...this.#tableHeaders.map(header => {
+        const th = document.createElement("th");
+        th.id = header.id;
+        th.className = "field-list-column";
+        th.innerHTML = `<div>${header.text}</div>`;
+        return th;
+      })
+    );
   }
 
+  /**
+   * Process message from the background script
+   */
   onMessage(request) {
     if (request.tabId != browser.devtools.inspectedWindow.tabId) {
       return;
@@ -94,7 +220,7 @@ class AutofillInspector {
       case 'inspect-complete': {
         // Clone the field detail array
         this.#inspectedFieldDetails = Array.from(request.data, item => ({ ...item }));
-        this.updateFieldsInfo(this.#inspectedFieldDetails);
+        this.#updateFieldsInfo(this.#inspectedFieldDetails);
 
         // Unblock those waiting for inspect results
         this.onInspectCompleteResolver?.();
@@ -103,28 +229,35 @@ class AutofillInspector {
       }
       case 'show': {
         document.querySelectorAll("tr.selected").forEach(row =>
-          this.addHighlightOverlay("select", this.#rowToFieldDetail.get(row))
+          this.#addHighlightOverlay("select", this.#rowToFieldDetail.get(row))
         );
         break;
       }
       case 'notify-progress': {
-        this.onUpdateProgressStatus(request.progress);
+        this.#updateProgress(request.progress);
         break;
       }
     }
   }
 
-  onClickInspect() {
-    this.#changes.clear();
+  inspect() {
+    this.#inspectedFieldDetails = null;
+    sendMessage("inspect", { changes: Array.from(this.#updateFieldNameByInspectId.values()) });
+  }
+
+  /**
+   * Inspect the autofill fields information for the whole page.
+   */
+  onInspect() {
+    this.#updateFieldNameByInspectId.clear();
     this.inspect();
   }
 
-  inspect() {
-    this.#inspectedFieldDetails = null;
-    this.sendMessage("inspect", { changes: Array.from(this.#changes.values()) });
-  }
-
+  /**
+   * Call devtools inspector API to inspect the selected element
+   */
   onInspectElement() {
+    // There might be multiple selected elements, we always inspect the first one.
     const row = document.querySelector("tr.selected");
     const fieldDetail = this.#rowToFieldDetail.get(row);
     const js = `
@@ -144,61 +277,39 @@ class AutofillInspector {
     }
   }
 
-  async captureInspectorPanel() {
-    // TODO: Can this move to the background script?
-    // Use html2Canvas to screenshot
-    const element = document.querySelector(".autofill-panel");
-    const width = element.scrollWidth;
-    const height =
-      document.querySelector(".devtools-toolbar").scrollHeight +
-      document.querySelector(".field-list-scroll").scrollHeight
-
-    const canvas = await html2canvas(element, {
-      allowTaint: true,
-      useCORS: true,
-      x: 0,
-      y: 0,
-      width,
-      height: height,
-      windowHeight: height,
-    });
-
-    return canvas.toDataURL("image/png");
-  }
-
   async onScreenshot() {
-    this.onUpdateProgressStatus("exporting inspect result");
+    this.#updateProgress("exporting inspect result");
     await this.waitForInspect();
 
-    const panelDataUrl = await this.captureInspectorPanel();
-    this.sendMessage("export-inspect", { panelDataUrl, saveAs: false });
+    const panelDataUrl = await this.#captureInspectorPanel();
+    sendMessage("export-inspect", { panelDataUrl, saveAs: false });
   }
 
   async onDownloadPage() {
-    this.onUpdateProgressStatus("downloading page");
+    this.#updateProgress("downloading page");
     await this.waitForInspect();
 
-    this.sendMessage("freeze", { fieldDetails: this.#inspectedFieldDetails });
+    sendMessage("download-page", { fieldDetails: this.#inspectedFieldDetails });
   }
 
   async onGenerateReport() {
-    this.onUpdateProgressStatus("generating report");
+    this.#updateProgress("generating report");
     await this.waitForInspect();
 
-    const panelDataUrl = await this.captureInspectorPanel();
-    this.sendMessage("generate-report", { panelDataUrl, fieldDetails: this.#inspectedFieldDetails });
+    const panelDataUrl = await this.#captureInspectorPanel();
+    sendMessage("generate-report", { panelDataUrl, fieldDetails: this.#inspectedFieldDetails });
   }
 
   async onReportIssue() {
-    this.onUpdateProgressStatus("reporting issue");
+    this.#updateProgress("reporting issue");
     await this.waitForInspect();
 
-    const panelDataUrl = await this.captureInspectorPanel();
-    this.sendMessage("report-issue",
+    const panelDataUrl = await this.#captureInspectorPanel();
+    sendMessage("report-issue",
       {
-        panelDataUrl,
+        attachmentDataUrl: panelDataUrl,
         fieldDetails: this.#inspectedFieldDetails,
-        changes: Array.from(this.#changes.values())
+        changes: Array.from(this.#updateFieldNameByInspectId.values())
       }
     );
   }
@@ -209,7 +320,7 @@ class AutofillInspector {
   // - Different button icon so we know we need to apply
   // - Show different color or add icon to modified field
   // - DO not change FieldName size in edit mode
-  async onEditFields(event) {
+  async onEditFields() {
     await this.waitForInspect();
 
     let hasChanged = false;
@@ -232,9 +343,9 @@ class AutofillInspector {
           }
           reasonSelect?.remove();
           change["fieldName"] = select.value;
-          this.#changes.set(fieldDetail.inspectId, change);
+          this.#updateFieldNameByInspectId.set(fieldDetail.inspectId, change);
         } else {
-          this.#changes.delete(fieldDetail.inspectId);
+          this.#updateFieldNameByInspectId.delete(fieldDetail.inspectId);
         }
         cell.textContent = select.value;
         select.remove();
@@ -244,7 +355,7 @@ class AutofillInspector {
         cell.classList.remove("changed");
 
         const select = document.createElement("select");
-        if (this.#changes.has(fieldDetail.inspectId)) {
+        if (this.#updateFieldNameByInspectId.has(fieldDetail.inspectId)) {
           select.classList.add("changed");
         }
 
@@ -308,11 +419,11 @@ class AutofillInspector {
   }
 
   onFilterFields() {
-    this.updateFieldsInfo(this.#inspectedFieldDetails);
+    this.#updateFieldsInfo(this.#inspectedFieldDetails);
   }
 
-  async onAddOrRemoveTestRecord() {
-    this.sendMessage(
+  onAddOrRemoveTestRecord() {
+    sendMessage(
       "set-test-records",
       {
         address: document.getElementById("autofill-add-address-button").checked,
@@ -321,117 +432,84 @@ class AutofillInspector {
     );
   }
 
-  onUpdateProgressStatus(progressText) {
+  /**
+   * Private Functions 
+   */
+  async #captureInspectorPanel() {
+    // TODO: Can we move this to the background script?
+    // Use html2Canvas to screenshot
+    const element = document.querySelector(".autofill-panel");
+    const width = element.scrollWidth;
+    const height =
+      document.querySelector(".devtools-toolbar").scrollHeight +
+      document.querySelector(".field-list-scroll").scrollHeight
+
+    const canvas = await html2canvas(element, {
+      allowTaint: true,
+      useCORS: true,
+      x: 0,
+      y: 0,
+      width,
+      height,
+      windowHeight: height,
+    });
+
+    return canvas.toDataURL("image/png");
+  }
+
+  #updateProgress(progressText) {
     const element = document.querySelector(".autofill-progress-status");
     element.textContent = progressText;
-
-  }
-  #buttonClickHandlers = [
-    ["autofill-inspect-start-button", () => this.onClickInspect()],
-    ["autofill-inspect-element-button", () => this.onInspectElement()],
-    ["autofill-screenshot-button", () => this.onScreenshot()],
-    ["autofill-download-button", () => this.onDownloadPage()],
-    ["autofill-report-button", () => this.onReportIssue()],
-    ["autofill-edit-field-button", (event) => this.onEditFields(event)],
-    ["autofill-generate-test-button", () => this.onGenerateReport()],
-  ]
-
-  #checkboxChangeHandlers = [
-    ["autofill-show-invisible-button", () => this.onFilterFields()],
-    ["autofill-show-unknown-button", () => this.onFilterFields()],
-    ["autofill-add-address-button", () => this.onAddOrRemoveTestRecord()],
-    ["autofill-add-credit-card-button", () => this.onAddOrRemoveTestRecord()],
-  ]
-
-  init() {
-    for (const [id, handler] of this.#buttonClickHandlers) {
-      const button = document.getElementById(id);
-      button.addEventListener("click", handler);
-    }
-
-    for (const [id, handler] of this.#checkboxChangeHandlers) {
-      const checkbox = document.getElementById(id);
-      checkbox.addEventListener("change", event => handler(event));
-    }
-
-    const headers = [
-      {id: "col-root", text: "Root"},
-      {id: "col-section", text: "Section"},
-      {id: "col-frame", text: "Frame"},
-      {id: "col-fieldName", text: "FieldName"},
-      {id: "col-reason", text: "Reason"},
-      {id: "col-identifier", text: "Id/Name"},
-      {id: "col-isVisible", text: "Visible"},
-      {id: "col-part", text: "Part"},
-      {id: "col-confidence", text: "Confidence"},
-    ];
-
-    const head_tr = document.getElementById("form-analysis-head-row");
-    headers.forEach(header => {
-      const th = document.createElement("th");
-      th.setAttribute("id", header.id);
-      th.setAttribute("class", "field-list-column");
-      const div = document.createElement("div");
-      div.innerHTML = header.text;
-      th.appendChild(div);
-      head_tr.appendChild(th);
-    });
   }
 
-  fieldDetailToColumnValue(columnId, fieldDetail) {
+  #fieldDetailToColumnValue(columnId, fieldDetail) {
     const regex = /^col-(.*)$/;
     const fieldName = columnId.match(regex)[1];
     return fieldDetail[fieldName];
   }
 
-  scrollIntoView(fieldDetail) {
-    this.sendMessage(
-      "scroll", {
-        inspectId: fieldDetail.inspectId,
-        frameId: fieldDetail.frameId,
-      }
-    );
+  #scrollIntoView(fieldDetail) {
+    sendMessage("scroll", { fieldDetail });
   }
 
-  addHighlightOverlay(type, fieldDetails) {
-    this.sendMessage("highlight", { type, fieldDetails });
+  #addHighlightOverlay(type, fieldDetails) {
+    sendMessage("highlight", { type, fieldDetails });
   }
 
   // Type should be either `select` or `hover`
-  removeHighlightOverlay(type, fieldDetails) {
-    this.sendMessage("highlight-remove", { type, fieldDetails });
+  #removeHighlightOverlay(type, fieldDetails) {
+    sendMessage("highlight-remove", { type, fieldDetails });
   }
 
-  getSpannedRows(td) {
-    const rowSpan = td.rowSpan;
-    const currentRow = td.parentElement;
-    const table = currentRow.parentElement;
-
-    const rowIndex = Array.from(table.children).indexOf(currentRow);
-
-    const spannedRows = [];
-    for (let i = 0; i < rowSpan; i++) {
-      const nextRow = table.children[rowIndex + i];
-      if (nextRow) {
-          spannedRows.push(nextRow);
-      }
+  #createRowFromFieldDetail(fieldDetail) {
+    const tr = document.createElement("tr");
+    tr.classList.add("field-list-item");
+    if (!fieldDetail.isVisible) {
+      tr.classList.add("invisible");
     }
-    return spannedRows;
+    if (!fieldDetail.fieldName) {
+      tr.classList.add("unknown");
+    }
+
+    // Setup the mouse over handler for this row
+    this.#rowToFieldDetail.set(tr, fieldDetail);
+    this.#setupRowMouseOver(tr, fieldDetail);
+    return tr;
   }
 
-  setupRowMouseOver(tr, fieldDetail) {
+  #setupRowMouseOver(tr, fieldDetail) {
     tr.addEventListener("mouseover", (event) => {
       event.preventDefault();
       let rows;
       if (event.target.hasAttribute("rowspan")) {
         tr.classList.add('className', 'autofill-hide-highlight');
-        rows = this.getSpannedRows(event.target);
+        rows = getSpannedRows(event.target);
       } else {
         rows = [tr];
       }
 
-      this.scrollIntoView(fieldDetail);
-      this.addHighlightOverlay("hover", rows.map(r => this.#rowToFieldDetail.get(r)));
+      this.#scrollIntoView(fieldDetail);
+      this.#addHighlightOverlay("hover", rows.map(r => this.#rowToFieldDetail.get(r)));
     });
 
     tr.addEventListener("mouseout", (event) => {
@@ -439,17 +517,29 @@ class AutofillInspector {
       let rows;
       if (event.target.hasAttribute("rowspan")) {
         tr.classList.remove('className', 'autofill-hide-highlight');
-        rows = this.getSpannedRows(event.target);
+        rows = getSpannedRows(event.target);
       } else {
         rows = [tr];
       }
 
-      this.removeHighlightOverlay("hover", rows.map(r => this.#rowToFieldDetail.get(r)));
+      this.#removeHighlightOverlay("hover", rows.map(r => this.#rowToFieldDetail.get(r)));
     });
   }
 
-  updateFieldsInfo(fieldDetails) {
+  /**
+   * Update the inpsected result table
+   *
+   * @param <Array> fieldDetails
+   *        The inspected result
+   */
+  #updateFieldsInfo(fieldDetails) {
+    // Clear the previous result before updating.
     this.#rowToFieldDetail.clear();
+    const tbody = document.getElementById("form-analysis-table-body");
+    while (tbody.firstChild) {
+      tbody.firstChild.remove();
+    }
+
     const showInvisible = document.getElementById("autofill-show-invisible-button").checked;
     const showUnknown = document.getElementById("autofill-show-unknown-button").checked;
     fieldDetails = fieldDetails.filter(fieldDetail => {
@@ -462,33 +552,19 @@ class AutofillInspector {
       return true;
     });
 
-    const tbody = document.getElementById("form-analysis-table-body");
-    while (tbody.firstChild) {
-      tbody.firstChild.remove();
-    }
-
     const cols = document.getElementById("form-analysis-head-row").childNodes;
     let nthSection = -1;
 
-    let formNextIndex;
-    let sectionNextIndex;
-    let frameNextIndex;
+    // Use row span for fields that belong to the same form, section, or frame
+    // We need to calculate the span count for each case.
+    let formSpanBoundary;
+    let sectionSpanBoundary;
+    let frameSpanBoundary;
 
-    for (let index = 0; index < fieldDetails?.length; index++) {
+    for (let index = 0; index < fieldDetails.length; index++) {
       const fieldDetail = fieldDetails[index];
 
-      const tr = document.createElement("tr");
-      tr.classList.add("field-list-item");
-      if (!fieldDetail.isVisible) {
-        tr.classList.add("invisible");
-      }
-      if (!fieldDetail.fieldName) {
-        tr.classList.add("unknown");
-      }
-
-      // Setup the mouse over handler for this row
-      this.#rowToFieldDetail.set(tr, fieldDetail);
-      this.setupRowMouseOver(tr, fieldDetail);
+      const tr = this.#createRowFromFieldDetail(fieldDetail);
 
       for (const column of cols) {
         if (!column.id) {
@@ -499,30 +575,30 @@ class AutofillInspector {
         td.id = column.id;
 
         switch (column.id) {
-          case "col-root": {
-            if (formNextIndex && index < formNextIndex) {
+          case "col-form": {
+            if (formSpanBoundary && index < formSpanBoundary) {
               continue;
             }
-            formNextIndex = findNextIndex(fieldDetails, index, (compare) =>
+            formSpanBoundary = findNextIndex(fieldDetails, index, (compare) =>
               fieldDetail.formIndex != compare.formIndex
             );
-            td.setAttribute("rowspan", formNextIndex - index);
+            td.setAttribute("rowspan", formSpanBoundary - index);
 
             td.classList.add("field-icon");
             td.classList.add("field-form-icon");
             break;
           }
           case "col-section": {
-            if (sectionNextIndex && index < sectionNextIndex) {
+            if (sectionSpanBoundary && index < sectionSpanBoundary) {
               continue;
             }
-            sectionNextIndex = findNextIndex(fieldDetails, index, (compare) =>
+            sectionSpanBoundary = findNextIndex(fieldDetails, index, (compare) =>
               fieldDetail.sectionIndex != compare.sectionIndex
             );
-            if (sectionNextIndex > formNextIndex) {
-              sectionNextIndex = formNextIndex;
+            if (sectionSpanBoundary > formSpanBoundary) {
+              sectionSpanBoundary = formSpanBoundary;
             }
-            td.setAttribute("rowspan", sectionNextIndex - index);
+            td.setAttribute("rowspan", sectionSpanBoundary - index);
 
             nthSection++;
             td.classList.add("field-icon");
@@ -534,16 +610,16 @@ class AutofillInspector {
             break;
           }
           case "col-frame": {
-            if (frameNextIndex && index < frameNextIndex) {
+            if (frameSpanBoundary && index < frameSpanBoundary) {
               continue;
             }
-            frameNextIndex = findNextIndex(fieldDetails, index, (compare) =>
+            frameSpanBoundary = findNextIndex(fieldDetails, index, (compare) =>
               fieldDetail.browsingContextId != compare.browsingContextId
             );
-            if (frameNextIndex > sectionNextIndex) {
-              frameNextIndex = sectionNextIndex;
+            if (frameSpanBoundary > sectionSpanBoundary) {
+              frameSpanBoundary = sectionSpanBoundary;
             }
-            td.setAttribute("rowspan", frameNextIndex - index);
+            td.setAttribute("rowspan", frameSpanBoundary - index);
 
             td.appendChild(document.createTextNode(fieldDetail.frame));
             break;
@@ -553,13 +629,14 @@ class AutofillInspector {
               td.classList.add("autofill-invisible-field");
             }
 
+            // Show different style for fields that we have edited its field name manually.
             if (column.id == "col-fieldName") {
-              if (this.#changes.has(fieldDetail.inspectId)) {
+              if (this.#updateFieldNameByInspectId.has(fieldDetail.inspectId)) {
                 td.classList.add("changed");
               }
             }
 
-            const text = this.fieldDetailToColumnValue(column.id, fieldDetail);
+            const text = this.#fieldDetailToColumnValue(column.id, fieldDetail);
             td.appendChild(document.createTextNode(text));
             break;
           }
@@ -573,27 +650,25 @@ class AutofillInspector {
       tbody.appendChild(tr);
     }
 
-    document.querySelectorAll(".field-list-item").forEach(tr => {
+    document.querySelectorAll(".field-list-table tr").forEach(tr => {
       tr.addEventListener("click", () => {
         const rows = event.target.hasAttribute("rowspan") ?
-          this.getSpannedRows(event.target) : [tr];
+          getSpannedRows(event.target) : [tr];
 
         let remove = [];
         let add = [];
         for (const row of rows) {
-          if (row.classList.contains("selected")) {
-            remove.push(this.#rowToFieldDetail.get(row));
-          } else {
+          row.classList.contains("selected") ?
+            remove.push(this.#rowToFieldDetail.get(row)) :
             add.push(this.#rowToFieldDetail.get(row));
-          }
           row.classList.toggle("selected");
         }
-        this.removeHighlightOverlay("select", remove);
-        this.addHighlightOverlay("select", add);
+        this.#removeHighlightOverlay("select", remove);
+        this.#addHighlightOverlay("select", add);
       });
     });
   }
-
 }
 
-let inspector = new AutofillInspector();
+new AutofillInspector();
+
