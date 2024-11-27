@@ -47,7 +47,6 @@ const ADDRESS_TYPES = [
   "tel-extension",
 ];
 
-// Utility Functions
 /**
  * Finds the next index in an array that satisfies a given condition.
  *
@@ -225,12 +224,6 @@ class AutofillInspector {
         // Unblock those waiting for inspect results
         this.onInspectCompleteResolver?.();
         this.onInspectCompleteResolver = null;
-        break;
-      }
-      case 'show': {
-        document.querySelectorAll("tr.selected").forEach(row =>
-          this.#addHighlightOverlay("select", this.#rowToFieldDetail.get(row))
-        );
         break;
       }
       case 'notify-progress': {
@@ -469,7 +462,7 @@ class AutofillInspector {
   }
 
   #scrollIntoView(fieldDetail) {
-    sendMessage("scroll", { fieldDetail });
+    sendMessage("scroll-to", { fieldDetail });
   }
 
   #addHighlightOverlay(type, fieldDetails) {
@@ -478,7 +471,7 @@ class AutofillInspector {
 
   // Type should be either `select` or `hover`
   #removeHighlightOverlay(type, fieldDetails) {
-    sendMessage("highlight-remove", { type, fieldDetails });
+    sendMessage("remove-highlight-", { type, fieldDetails });
   }
 
   #createRowFromFieldDetail(fieldDetail) {

@@ -1,4 +1,13 @@
-ChromeUtils.defineESModuleGetters(this, {
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+"use strict";
+
+/* global ChromeUtils ExtensionAPI */
+
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
   WebNavigationFrames: "resource://gre/modules/WebNavigationFrames.sys.mjs",
 });
 
@@ -15,9 +24,24 @@ this.autofill = class extends ExtensionAPI {
     return {
       experiments: {
         autofill: {
-          // TODO: Explain why we need this CaptureTab. V3 Doesn't have this
+          /*
+           * Implement 'captureTab' webextension API because manifest v3 doesn't
+           * support it anymore.
+           *
+           * @param {integer} tabId
+           *        The ID of the tab to take the screenshot
+           * @param {integer} x
+           *        The coordinate of the left side of the rectangle to capture.
+           * @param {integer} y
+           *        The coordinate of the top side of the rectangle to capture.
+           * @param {integer} width
+           *        The width of the rectangle to capture.
+           * @param {integer} height
+           *        The height of the rectangle to capture.
+           */
           async captureTab(tabId, x, y, width, height) {
-            // Copied from https://searchfox.org/mozilla-central/rev/4e69784010d271c0fce0927442e4f8e66ffe645b/toolkit/components/extensions/parent/ext-tabs-base.js#112
+            // Copied from
+            // https://searchfox.org/mozilla-central/rev/4e69784010d271c0fce0927442e4f8e66ffe645b/toolkit/components/extensions/parent/ext-tabs-base.js#112
             const { browser } = tabManager.get(tabId);
 
             const zoom = browser.browsingContext.fullZoom;
@@ -49,9 +73,21 @@ this.autofill = class extends ExtensionAPI {
             return dataURL;
           },
 
+          /*
+           * Inspect the autofill fields of the target tab.
+           *
+           * @param {integer} tabId
+           *        The ID of the tab to inspect.
+           * @param {object} changes
+           *        TODO: Explain it: The changes made by the inspector.
+           * @return {Array<FieldDetail>}
+           *        The array of FieldDetail object of all the inspected fields.
+           */
           async inspect(tabId, changes) {
-            console.log("inspect with changes" + JSON.stringify(changes));
             const actor = getActorByTabId(tabId, tabManager);
+            if (!actor) {
+              return;
+            }
 
             const forms = await actor.inspectFields(changes);
 
@@ -68,14 +104,17 @@ this.autofill = class extends ExtensionAPI {
                   const bc = bcs.find(bc => bc.id == fieldDetail.browsingContextId);
                   const host = bc.currentWindowGlobal.documentPrincipal.host;
 
-                  fieldDetail.frameId = WebNavigationFrames.getFrameId(bc);
+                  fieldDetail.frameId = lazy.WebNavigationFrames.getFrameId(bc);
 
                   if (!bc || bc == bc.top) {
+                    // main-frame
                     fieldDetail.frame = `(M) ${host}`;
                   } else if (bc.currentWindowGlobal.documentPrincipal.equals(
                       bc.top.currentWindowGlobal.documentPrincipal)) {
+                    // same-origin iframe
                     fieldDetail.frame = `(S) ${host}`;
                   } else {
+                    // cross-origin iframe
                     fieldDetail.frame = `(C) ${host}`;
                   }
                 }
@@ -86,8 +125,19 @@ this.autofill = class extends ExtensionAPI {
             return fieldDetails;
           },
 
+          /*
+           * Set test address and credit card reocrd for the specified tab.
+           *
+           * @param {integer} tabId
+           *        The ID of the tab to use test records.
+           * @param {Array<Object>} records
+           *        An array of test address and/or credit card records
+           */
           async setTestRecords(tabId, records) {
             const actor = getActorByTabId(tabId, tabManager);
+            if (!actor) {
+              return;
+            }
 
             await actor.setTestRecords(records);
           },

@@ -315,7 +315,7 @@ class DownloadPageFeature {
    * We will save additional attribte - `data-moz-autofill-type` so we can use this
    * for ML training
    */
-  static async beforeFreeze(tabId, fieldDetails) {
+  static async #beforeFreeze(tabId, fieldDetails) {
     const frames = await browser.webNavigation.getAllFrames({ tabId });
     for (const frame of frames) {
       const inspectedFields = fieldDetails
@@ -342,7 +342,7 @@ class DownloadPageFeature {
     }
   }
 
-  static async runFreeze(tabId, frame) {
+  static async #runFreeze(tabId, frame) {
     const freezePromise = new Promise((resolve) => {
       function waitForFreeze(request) {
         if (request.msg === "content-freeze-complete") {
@@ -363,7 +363,7 @@ class DownloadPageFeature {
     return await freezePromise;
   }
 
-  static postProcessingMainFrameHTML(html, urlToPath) {
+  static #postProcessingMainFrameHTML(html, urlToPath) {
     for (let [url, path] of urlToPath) {
       url = url.replace(/&/g, "&amp;");
       // Replace iframe src=url to point to local file
@@ -412,7 +412,7 @@ class DownloadPageFeature {
     frames = [...iframes, mainFrame];
 
     notifyProgress(tabId, "freezing page - setting data attributes");
-    await DownloadPageFeature.beforeFreeze(tabId, fieldDetails);
+    await DownloadPageFeature.#beforeFreeze(tabId, fieldDetails);
 
     const pages = [];
     const urlToPath = [];
@@ -421,7 +421,7 @@ class DownloadPageFeature {
       notifyProgress(tabId, `freezing frame (${idx+1}/${frames.length}) - ${frame.url}`);
       let html;
       try {
-        html = await DownloadPageFeature.runFreeze(tabId, frame);
+        html = await DownloadPageFeature.#runFreeze(tabId, frame);
       } catch (error) {
         notifyProgress(tabId, `Error freezing frame (${idx+1}/${frames.length}) - ${frame.url} : ${error}`);
       }
@@ -433,7 +433,7 @@ class DownloadPageFeature {
         urlToPath.push([frame.url, filename]);
       } else {
         filename = `${new URL(frame.url).host}.html`;
-        html = DownloadPageFeature.postProcessingMainFrameHTML(html, urlToPath);
+        html = DownloadPageFeature.#postProcessingMainFrameHTML(html, urlToPath);
       }
       pages.push({
         filename,
@@ -477,12 +477,21 @@ class DownloadPageFeature {
 }
 
 class GenerateTestFeature {
-  static fieldDetailsToTestExpectedResult(fieldDetails) {
+  /**
+   * Converts field details into a structured format for generating test results.
+   *
+   * @param {Array<Object>} fieldDetails
+   *        Array of field detail objects.
+   * @returns {Array<Object>}
+   *          Array of sections with structured field data.
+   */
+  static #fieldDetailsToTestExpectedResult(fieldDetails) {
     let expectedSection;
     const sections = [];
     let formIndex;
     let sectionIndex;
     for (const fieldDetail of fieldDetails) {
+      // Skip fields that are invisible or lack a field name
       if (!fieldDetail.fieldName || (!fieldDetail.isVisible && fieldDetail.localName == "input")) {
         continue;
       }
@@ -510,7 +519,7 @@ class GenerateTestFeature {
   }
 
   static async create(host, fieldDetails) {
-    const inspectResult = GenerateTestFeature.fieldDetailsToTestExpectedResult(fieldDetails);
+    const inspectResult = GenerateTestFeature.#fieldDetailsToTestExpectedResult(fieldDetails);
     const filename = `${host}.json`;
     const text = JSON.stringify(inspectResult, null, 2);
 
@@ -526,7 +535,7 @@ class ReportIssueFeature {
   static BUGZILLA_NEW_BUG_URL =
     "https://bugzilla.mozilla.org/enter_bug.cgi?product=Toolkit&component=Form+Autofill";
 
-  static async uploadAttachmentToBugzilla(tabId, filename, type, panelDataUrl) {
+  static async #uploadAttachmentToBugzilla(tabId, filename, type, panelDataUrl) {
     notifyProgress(tabId, "exporting inspect result");
     const blob = dataURLToBlob(panelDataUrl);
     const arrayBuffer = await blobToArrayBuffer(blob);
@@ -647,7 +656,7 @@ class ReportIssueFeature {
           args: [host, changes]
         });
 
-        ReportIssueFeature.uploadAttachmentToBugzilla(tab.id, "inspect.png", "image/png", attachmentDataUrl);
+        ReportIssueFeature.#uploadAttachmentToBugzilla(tab.id, "inspect.png", "image/png", attachmentDataUrl);
 
         browser.scripting.executeScript({
           target: { tabId: tab.id },
@@ -672,7 +681,7 @@ class AutofillFeature {
    * @returns {Promise<Object[]>}
    *          A promise that resolves to an array of test addresses.
    */
-  static async getTestAddresses() {
+  static async #getTestAddresses() {
     return await loadFile("data/test-addresses.json");
   }
 
@@ -682,7 +691,7 @@ class AutofillFeature {
    * @returns {Promise<Object[]>}
    *           A promise that resolves to an array of test credit cards.
    */
-  static async getTestCreditCards() {
+  static async #getTestCreditCards() {
     return await loadFile("data/test-credit-cards.json");
   }
 
@@ -721,12 +730,12 @@ class AutofillFeature {
     const records = [];
 
     if (address) {
-      const addresses = await AutofillFeature.getTestAddresses();
+      const addresses = await AutofillFeature.#getTestAddresses();
       records.push(...addresses);
     }
 
     if (creditcard) {
-      const creditcards = await AutofillFeature.getTestCreditCards();
+      const creditcards = await AutofillFeature.#getTestCreditCards();
       records.push(...creditcards);
     }
 
@@ -752,6 +761,11 @@ async function handleMessage(request) {
       AutofillFeature.inspect(tabId, changes);
       break;
     }
+    case "set-test-records": {
+      const { address, creditcard } = request;
+      AutofillFeature.setTestRecords(tabId, address, creditcard);
+      break;
+    }
     // Download the page markup
     case "download-page": {
       const { fieldDetails } = request;
@@ -773,11 +787,11 @@ async function handleMessage(request) {
 
       const tests = await GenerateTestFeature.create(host, fieldDetails);
       tests.forEach(test => test.filename = `test/${test.filename}`);
+
       zipAndDownload([screenshot, inspect, ...pages, ...tests], host, "report");
       break;
     }
     case "export-inspect": {
-      // Screenshot the tab and Sceenshot the autofill inspect panel
       const { panelDataUrl } = request;
 
       const files = await Promise.all([
@@ -787,26 +801,12 @@ async function handleMessage(request) {
       files.forEach(file => download(file.filename, file.blob, false));
       break;
     }
-    // File a Site Compatibility Bug Report
     case "report-issue": {
       const { attachmentDataUrl, changes } = request;
       ReportIssueFeature.reportToBugzilla(tabId, attachmentDataUrl, changes);
       break;
     }
-    // Add Test Records to show in the autocomplete dropdown
-    case "set-test-records": {
-      const { address, creditcard } = request;
-      AutofillFeature.setTestRecords(tabId, address, creditcard);
-      break;
-    }
-    /**
-     * Autofill Inspector Panel Commands
-     */
-    case "hide": {
-      HighlightFeature.removeAllHighlightOverlay(tabId);
-      break;
-    }
-    case "scroll": {
+    case "scroll-to": {
       const { fieldDetail } = request;
       HighlightFeature.scrollIntoView(tabId, fieldDetail);
       break;
@@ -816,7 +816,7 @@ async function handleMessage(request) {
       HighlightFeature.addHighlightOverlay(tabId, type, fieldDetails);
       break;
     }
-    case "highlight-remove": {
+    case "remove-highlight": {
       const { type, fieldDetails } = request;
       HighlightFeature.removeHighlightOverlay(tabId, type, fieldDetails);
       break;

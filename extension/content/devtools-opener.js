@@ -1,25 +1,13 @@
-browser.devtools.panels
-  .create(
-    "Autofill", // title
-    "icons/icon.svg", // icon
-    "devtools-panel.html", // content
-  )
-  .then((newPanel) => {
-    newPanel.onShown.addListener(panelShown);
-    newPanel.onHidden.addListener(panelHidden);
-  });
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
 
-function panelShown() {
-  //browser.runtime.sendMessage({
-    //msg: "show",
-    //tabId: browser.devtools.inspectedWindow.tabId,
-  //});
-}
+/* global browser */
 
-function panelHidden() {
-  //browser.runtime.sendMessage({
-    //msg: "hide",
-    //tabId: browser.devtools.inspectedWindow.tabId,
-  //});
-}
+browser.devtools.panels.create(
+  "Autofill", // title
+  "icons/icon.svg", // icon
+  "devtools-panel.html", // content
+));

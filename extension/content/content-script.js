@@ -1,4 +1,11 @@
-console.log(`Content Script loaded`);
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+"use strict";
+
+/* global browser */
+
 browser.runtime.onMessage.addListener(data => {
   if (data.message == 'content-freeze-page') {
     const url = browser.runtime.getURL("libs/freeze-dry.es.js");
